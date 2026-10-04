@@ -25,6 +25,18 @@ const PACKAGE_NAME = `npm:${pkg.name}@${pkg.version}`;
 test("next Pi package release is 0.2.0", () => {
 	assert.equal(pkg.version, "0.2.0");
 });
+test("packed Pi tests include their release validator dependency", () => {
+	const output = execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
+		cwd: fileURLToPath(new URL("../", import.meta.url)),
+		encoding: "utf8",
+	});
+	const [manifest] = JSON.parse(output);
+	const paths = new Set(manifest.files.map((file) => file.path));
+	for (const path of ["test/release-contract.mjs", "test/release-version-contract.test.mjs", "release/version-contract.mjs"]) {
+		assert.ok(paths.has(path), `npm pack must include ${path}`);
+	}
+});
+
 const LEGACY_PACKAGE_NAMES = ["npm:gentle-engram@0.1.8", "npm:gentle-engram@0.1.11", "npm:gentle-engram@0.1.12", "npm:gentle-engram@0.1.14", "npm:gentle-engram@0.1.15", "npm:gentle-engram@0.1.16"];
 const MCP_ADAPTER_PACKAGE = "npm:pi-mcp-adapter";
 const CLI_PATH = fileURLToPath(new URL("../cli.js", import.meta.url));
@@ -255,6 +267,14 @@ test("Pi release contract rejects a tag that differs from the package version", 
 	const result = runReleaseContract("refs/tags/pi-v0.0.0");
 	assert.notEqual(result.status, 0);
 	assert.match(result.stderr, /must match package version/);
+});
+
+test("current Pi preflight rejects core train tags and malformed SemVer tags", () => {
+	for (const ref of [`refs/tags/v${pkg.version}`, "refs/tags/pi-v00.2.0", "refs/tags/pi-v0.2.0-01", `refs/tags/pi-v${pkg.version}\n`]) {
+		const result = runReleaseContract(ref);
+		assert.notEqual(result.status, 0, `${JSON.stringify(ref)} must not be publishable`);
+		assert.match(result.stderr, /must match package version/);
+	}
 });
 
 test("Pi release contract rejects branch refs even when their names match", () => {

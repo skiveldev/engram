@@ -47,6 +47,7 @@
     "memory-tool-chrome.js",
     "mcp-template.json",
     "private-redaction.js",
+    "release/",
     "test/",
     "README.md",
     "package.json"

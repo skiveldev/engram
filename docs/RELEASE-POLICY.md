@@ -32,6 +32,28 @@ The [stable release gap audit](../.github/workflows/release-gap-audit.yml) runs 
 
 The Pi npm publish workflow also supports manual dispatch, but it only publishes when the selected GitHub ref is the full `refs/tags/pi-v<package version>` tag matching `plugin/pi/package.json`. Select that tag for a manual run: dispatching from a branch, even one named `pi-v<package version>`, fails the release preflight.
 
+## Release version contract boundary
+
+The existing Pi preflight (`plugin/pi/test/release-contract.mjs`) requires strict
+SemVer 2.0 and exact agreement between the full `refs/tags/pi-v<version>` ref,
+`plugin/pi/package.json`, and the current installer pin. Metadata parsing, the
+single-pin check, and CLI install guidance remain required before publication.
+Branches, shorthand tags, malformed versions, and the core tag prefix fail closed.
+
+The pure validator in `plugin/pi/release/version-contract.mjs` also provides an
+explicit core route for a future coordinated train: `refs/tags/v<version>` must
+agree exactly with supplied package, installer, and optional Pi metadata versions.
+Omitted Pi metadata is allowed; supplied null, missing-value, or nonstring metadata
+is rejected. Prerelease and build identifiers follow SemVer 2.0, including numeric
+leading-zero restrictions; build identifiers may contain leading zeros. Agreement
+includes build metadata even though SemVer precedence ignores it.
+
+This is tested validation capability, not an active lockstep release workflow.
+Core and Pi publication remain independent, with the supported Pi tag route and
+preflight/test/publish order unchanged. No version or pin is selected or bumped;
+publication orchestration, destination lookup, resumability, ProfileAgent parity,
+and managed-pin migration are outside this boundary.
+
 ## Related policies
 
 - [Security policy](../SECURITY.md) for vulnerability reporting and supported-version security fixes.
