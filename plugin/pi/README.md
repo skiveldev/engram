@@ -141,6 +141,43 @@ and wire error contracts, not which inputs the Pi host accepts or rejects. MCP
 and HTTP errors retain their distinct formats; lifecycle parity and global T2's
 remaining 19-tool semantic/release gates remain pending.
 
+### Search and project-list public-response evidence
+
+From `plugin/pi`, with offline Go dependencies and isolated `TMPDIR`, `GOTMPDIR`,
+and `GOCACHE` under Git's common directory:
+
+```sh
+test -f test/release-search-projects-contract.test.mjs && node --test test/release-search-projects-contract.test.mjs
+```
+
+The real-core fixture checks an empty project listing, then publicly seeds two
+projects and observations. All-known project counts and complete records match
+across MCP, HTTP and registered Pi execution when copies are sorted by name;
+raw array ordering is not a parity requirement. Original responses are retained.
+
+Explicit-project search covers default and compact responses, unmatched queries,
+and invalid response formats. Complete HTTP JSON equals Pi `details.data`.
+Compact MCP results match the complete HTTP array; Unicode previews are bounded
+and full content is omitted. Legacy HTTP returns full content and storage/search
+fields; MCP returns project-context JSON containing preview prose and structured
+identity/lifecycle fields, not equivalent full observation JSON. Empty MCP search
+returns prose without a `results` field. HTTP and Pi retain their separate empty
+array/rendering and exact error contracts.
+
+Runtime-confirmed global-search variants, for default and compact responses:
+
+- Without `project`, `all_projects: true` returns both seeded IDs in all three paths.
+- Direct HTTP rejects `project` together with `all_projects: true` with HTTP 400.
+- MCP accepts that combination and searches globally, bypassing project resolution.
+- Pi accepts that input but omits `project` when forwarding `all_projects: true`;
+  its complete payload matches unqualified global HTTP search, not HTTP rejection.
+
+Every successful read and rejected call preserves all publicly exported stored
+fields and statistics; only validated `exported_at` generation metadata is excluded.
+Combination inputs and actual Pi payloads are emitted as test diagnostics.
+This sandbox bypasses SDK validation. Personal-scope variants, populated relations,
+host lifecycle and the remaining full T2 semantic/release gates are not proved.
+
 ### SDK host-validation evidence
 
 The host integration is intentionally outside the default npm test glob. With an
