@@ -44,8 +44,9 @@ Direct stub-registered Pi execution bypasses host validation. This protocol fixt
 pairs valid context inputs through real MCP/HTTP and separately checks MCP's
 fractional/nonpositive fallback. Real SDK validation evidence is a separate work
 unit; this slice does not prove host validation or lifecycle equivalence.
-Observation project-context/pagination pairing and other-tool semantic proof remain
-pending; schema comparisons alone are not release acceptance.
+Observation project-context/pagination pairing has a dedicated real-core fixture
+below; other-tool semantic proof remains pending. Schema comparisons alone are
+not release acceptance.
 
 ## Packed release validation
 
@@ -108,6 +109,30 @@ separated from Pi-owned attribution, leases, continuation, and recovery. Resolvi
 public shape differences requires a separately scoped production change or an
 explicit contract disposition; the named variants above have explicit dispositions.
 
+### Observation public-response evidence
+
+From `plugin/pi`, with offline Go dependencies and isolated `TMPDIR`, `GOTMPDIR`,
+and `GOCACHE` under Git's common directory:
+
+```sh
+test -f test/release-observation-contract.test.mjs && node --test test/release-observation-contract.test.mjs
+```
+
+One focused fixture seeds sessions and an observation through public HTTP, then
+creates 52 revisions through public PATCH. It pairs real MCP calls, HTTP JSON,
+and registered Pi execution for omitted/false history, ignored disabled cursor,
+cursor 0 (50 chronological versions), the returned cursor (two older versions),
+and exhaustion. Complete HTTP JSON equals Pi `details.data`; MCP's JSON envelope
+and formatted prose are checked separately, including full content and shared
+history/count/continuation fields. Every read compares all exported stored fields
+and all statistics counters; only `exported_at` generation metadata is validated
+separately. MCP's alternate `project` response context still returns the original
+observation: it is not an ownership filter and has no equivalent Pi argument.
+
+This sandbox bypasses SDK validation. It does not prove invalid-input equivalence,
+HTTP error contracts, or host lifecycle parity. Global T2 and the remaining
+19-tool semantic/release gates remain pending.
+
 ### SDK host-validation evidence
 
 The host integration is intentionally outside the default npm test glob. With an
@@ -132,7 +157,8 @@ Every stored export field and counter is compared around each nested dispatch;
 only export-generation metadata is validated separately. Normal startup, prompt,
 and passive-capture lifecycle writes are recorded separately, not claimed absent.
 This narrow host proof does not establish lifecycle equivalence with MCP or close
-observation pairing and the remaining 19-tool semantic release gates.
+the remaining 19-tool semantic release gates; observation pairing is covered
+separately above.
 
 ## Local bridge ownership protocol
 
