@@ -183,6 +183,27 @@ Pi-native compact tools use the same HTTP server path as event capture, includin
 
 ## Compact memory tool rendering
 
+`mem_get_observation` accepts optional `include_history` and `history_cursor`,
+forwarded to `GET /observations/{id}`. Omission or false preserves the current
+observation JSON and ignores the cursor. HTTP booleans accept `true`, `True`,
+`TRUE`, `t`, `T`, `1` and `false`, `False`, `FALSE`, `f`, `F`, `0`; other values
+(including empty) return 400 with `include_history must be a boolean`.
+With history enabled, the cursor must be a non-negative int64 (zero or omission
+selects the latest page). Invalid, fractional, negative, overflowing or empty
+cursors return 400 with `history_cursor must be a non-negative integer`.
+The current fields remain unchanged; `history` is always an array and
+`version_count` is the total number of previous versions. Pages contain at most
+50 versions in ascending order. Only when older versions remain does the response
+include `history_truncated: true`, `history_from_version` and numeric
+`history_cursor`; pass that cursor to retrieve the older page. History read
+failures return 500 with `Failed to read observation history: <details>`, never
+a successful current-only response. Existing invalid-ID 400 and missing-ID 404
+behavior takes precedence over history query validation.
+
+`mem_update` forwards optional literal `find` and `replace` unchanged to the
+existing HTTP PATCH endpoint, including an empty replacement. Supply both instead
+of `content`; `expected_project` remains required. Full-content updates are unchanged.
+
 `mem_search` accepts optional `response_format: "compact"` and forwards it to
 HTTP `GET /search?response_format=compact`. The response remains a JSON array,
 with bounded previews (at most 300 Unicode characters), `truncated`, lifecycle

@@ -672,6 +672,48 @@ test("fresh Pi state honors a structured session-project conflict without captur
   }
 });
 
+for (const name of ["mem_get_observation", "mem_update"]) {
+  test(`registered Pi-native ${name} history and replacement wire contract`, async () => {
+    const originalFetch = globalThis.fetch;
+    const originalUrl = process.env.ENGRAM_URL;
+    process.env.ENGRAM_URL = "http://127.0.0.1:17437";
+    const payload = { id: 7, content: "current" };
+    const { calls, fetchStub } = recordingFetch([
+      { method: "GET", path: "/health", body: { status: "ok" } },
+      { method: "GET", path: "/project/current", body: { project: "engram" } },
+      { method: name === "mem_update" ? "PATCH" : "GET", path: "/observations/7", body: payload },
+    ]);
+    globalThis.fetch = fetchStub;
+    try {
+      await withPluginSandbox("engram-pi-history-", async ({ sandbox }) => {
+        const { registeredTools } = await loadPluginHarness(sandbox);
+        const tool = registeredTools.get(name);
+        const fields = name === "mem_update" ? ["find", "replace"] : ["include_history", "history_cursor"];
+        const variants = name === "mem_update"
+          ? [{ find: "old", replace: "" }, { content: "full replacement", title: "old behavior" }]
+          : [{ include_history: true, history_cursor: 3 }, { include_history: false, history_cursor: 0 }, {}];
+        for (const extra of variants) {
+          const params = { id: 7, ...extra, ...(name === "mem_update" ? { expected_project: "owner & spaces" } : {}) };
+          const result = await tool.execute("history-wire", params, undefined, undefined, runtimeContext("history-owner"));
+          assert.notEqual(result.isError, true);
+          assert.deepEqual(JSON.parse(result.content[0].text), payload);
+          const request = calls.filter(call => call.path.startsWith("/observations/7")).at(-1);
+          const query = Object.fromEntries(new URL(request.path, "http://localhost").searchParams);
+          assert.equal(request.method, name === "mem_update" ? "PATCH" : "GET");
+          assert.deepEqual(query, name === "mem_update" ? { expected_project: "owner & spaces" } : Object.fromEntries(Object.entries(extra).map(([key, value]) => [key, String(value)])));
+          assert.deepEqual(request.body, name === "mem_update" ? extra : undefined);
+        }
+        for (const field of fields) assert.equal(tool.parameters.args[0][field]?.kind, "Optional");
+        assert.equal(calls.filter(call => call.path.startsWith("/observations/7")).length, variants.length);
+        assert.equal(calls.some(call => call.method === "POST"), false);
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalUrl === undefined) delete process.env.ENGRAM_URL; else process.env.ENGRAM_URL = originalUrl;
+    }
+  });
+}
+
 test("registered Pi-native mem_search forwards compact format and preserves omitted-format requests", async () => {
   const originalFetch = globalThis.fetch;
   const originalUrl = process.env.ENGRAM_URL;

@@ -873,7 +873,59 @@ func (s *Server) handleGetObservation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jsonResponse(w, http.StatusOK, obs)
+	includeHistory := false
+	if raw, present := r.URL.Query()["include_history"]; present {
+		includeHistory, err = strconv.ParseBool(raw[0])
+		if err != nil {
+			jsonError(w, http.StatusBadRequest, "include_history must be a boolean")
+			return
+		}
+	}
+	if !includeHistory {
+		jsonResponse(w, http.StatusOK, obs)
+		return
+	}
+	var cursor int64
+	if raw, present := r.URL.Query()["history_cursor"]; present {
+		cursor, err = strconv.ParseInt(raw[0], 10, 64)
+		if err != nil || cursor < 0 {
+			jsonError(w, http.StatusBadRequest, "history_cursor must be a non-negative integer")
+			return
+		}
+	}
+	page, err := s.store.GetObservationVersionPage(id, store.DefaultObservationVersionPageSize, cursor)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to read observation history: %v", err))
+		return
+	}
+	// Raw messages preserve integer identity and every existing observation field.
+	encoded, err := json.Marshal(obs)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "failed to encode observation")
+		return
+	}
+	var result map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		jsonError(w, http.StatusInternalServerError, "failed to encode observation")
+		return
+	}
+	history := make([]map[string]any, 0, len(page.Versions))
+	for _, version := range page.Versions {
+		history = append(history, map[string]any{
+			"version": version.Version, "title": version.Title,
+			"content": version.Content, "created_at": version.CreatedAt,
+		})
+	}
+	extra := map[string]any{"history": history, "version_count": page.Total}
+	if page.HasMore {
+		extra["history_truncated"] = true
+		extra["history_from_version"] = page.Versions[0].Version
+		extra["history_cursor"] = page.NextCursor
+	}
+	for key, value := range extra {
+		result[key], _ = json.Marshal(value)
+	}
+	jsonResponse(w, http.StatusOK, result)
 }
 
 func (s *Server) handleUpdateObservation(w http.ResponseWriter, r *http.Request) {

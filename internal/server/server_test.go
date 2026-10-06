@@ -27,6 +27,101 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+func TestHandleGetObservationHistory(t *testing.T) {
+	st := newServerTestStore(t)
+	if err := st.CreateSession("history", "owner", t.TempDir()); err != nil { t.Fatal(err) }
+	id, err := st.AddObservation(store.AddObservationParams{SessionID: "history", Project: "owner", Type: "note", Title: "title", Content: "state-00"})
+	if err != nil { t.Fatal(err) }
+	srv := New(st, 0)
+	request := func(method, path, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		r := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(r, httptest.NewRequest(method, path, strings.NewReader(body)))
+		return r
+	}
+	path := fmt.Sprintf("/observations/%d", id)
+	decode := func(r *httptest.ResponseRecorder) map[string]json.RawMessage {
+		t.Helper()
+		if r.Code != 200 { t.Fatalf("response = %d: %s", r.Code, r.Body.String()) }
+		var result map[string]json.RawMessage
+		if err := json.Unmarshal(r.Body.Bytes(), &result); err != nil { t.Fatal(err) }
+		return result
+	}
+	assertPage := func(t *testing.T, query string, total, first, size int, more bool) {
+		t.Helper()
+		result := decode(request("GET", path+query, ""))
+		if string(result["version_count"]) != fmt.Sprint(total) { t.Fatalf("total = %s", result["version_count"]) }
+		var history []struct { Version int `json:"version"`; Title string `json:"title"`; Content string `json:"content"`; CreatedAt string `json:"created_at"` }
+		if err := json.Unmarshal(result["history"], &history); err != nil { t.Fatal(err) }
+		if history == nil || len(history) != size { t.Fatalf("history = %s", result["history"]) }
+		for i, v := range history {
+			if v.Version != first+i || v.Title != "title" || v.Content != fmt.Sprintf("state-%02d", first+i-1) || v.CreatedAt == "" { t.Fatalf("version = %+v", v) }
+		}
+		for _, key := range []string{"history_truncated", "history_from_version", "history_cursor"} {
+			if _, ok := result[key]; ok != more { t.Fatalf("%s presence = %v", key, ok) }
+		}
+		if more && (string(result["history_truncated"]) != "true" || string(result["history_from_version"]) != fmt.Sprint(first) || string(result["history_cursor"]) != fmt.Sprint(first)) { t.Fatalf("continuation = %v", result) }
+		legacy := decode(request("GET", path, ""))
+		for key, value := range legacy { if !bytes.Equal(value, result[key]) { t.Fatalf("current field %s changed", key) } }
+	}
+	t.Run("empty", func(t *testing.T) { assertPage(t, "?include_history=true", 0, 0, 0, false) })
+	for i := 1; i <= store.DefaultObservationVersionPageSize+2; i++ {
+		r := request("PATCH", path+"?expected_project=owner", fmt.Sprintf(`{"content":"state-%02d"}`, i))
+		if r.Code != 200 { t.Fatalf("update = %d: %s", r.Code, r.Body.String()) }
+	}
+	var writes atomic.Int32
+	srv.SetOnWrite(func() { writes.Add(1) })
+	before := request("GET", path, "").Body.String()
+	stats := request("GET", "/stats?all_projects=true", "").Body.String()
+	t.Run("latest", func(t *testing.T) { assertPage(t, "?include_history=true&history_cursor=0", store.DefaultObservationVersionPageSize+2, 3, store.DefaultObservationVersionPageSize, true) })
+	t.Run("older", func(t *testing.T) { assertPage(t, "?include_history=true&history_cursor=3", store.DefaultObservationVersionPageSize+2, 1, 2, false) })
+	t.Run("exhausted", func(t *testing.T) { assertPage(t, "?include_history=true&history_cursor=1", store.DefaultObservationVersionPageSize+2, 0, 0, false) })
+	t.Run("int64 boundary", func(t *testing.T) { assertPage(t, "?include_history=true&history_cursor=9223372036854775807", store.DefaultObservationVersionPageSize+2, 3, store.DefaultObservationVersionPageSize, true) })
+	for _, value := range []string{"true", "TRUE", "True", "1", "t", "T"} {
+		t.Run("boolean "+value, func(t *testing.T) { assertPage(t, "?include_history="+value, store.DefaultObservationVersionPageSize+2, 3, store.DefaultObservationVersionPageSize, true) })
+	}
+	for _, query := range []string{"", "?history_cursor=bad", "?include_history=false&history_cursor=", "?include_history=0&history_cursor=-1", "?include_history=f", "?include_history=F", "?include_history=False", "?include_history=FALSE"} {
+		t.Run("legacy "+query, func(t *testing.T) { if r := request("GET", path+query, ""); r.Code != 200 || r.Body.String() != before { t.Fatalf("legacy = %d: %s", r.Code, r.Body.String()) } })
+	}
+	for _, value := range []string{"", "-1", "1.5", "bad", "9223372036854775808"} {
+		t.Run("cursor "+value, func(t *testing.T) {
+			r := request("GET", path+"?include_history=true&history_cursor="+value, "")
+			if r.Code != 400 || r.Body.String() != "{\"error\":\"history_cursor must be a non-negative integer\"}\n" { t.Fatalf("rejection = %d: %s", r.Code, r.Body.String()) }
+		})
+	}
+	for _, value := range []string{"", "bad"} {
+		t.Run("invalid boolean "+value, func(t *testing.T) {
+			r := request("GET", path+"?include_history="+value, "")
+			if r.Code != 400 || r.Body.String() != "{\"error\":\"include_history must be a boolean\"}\n" { t.Fatalf("rejection = %d: %s", r.Code, r.Body.String()) }
+		})
+	}
+	for _, tc := range []struct { path string; code int; message string }{{"/observations/bad?include_history=true", 400, "invalid observation id"}, {"/observations/9223372036854775807?include_history=true&history_cursor=bad", 404, "observation not found"}} {
+		r := request("GET", tc.path, "")
+		if r.Code != tc.code || r.Body.String() != fmt.Sprintf("{\"error\":%q}\n", tc.message) { t.Fatalf("lookup = %d: %s", r.Code, r.Body.String()) }
+	}
+	if request("GET", path, "").Body.String() != before || request("GET", "/stats?all_projects=true", "").Body.String() != stats || writes.Load() != 0 { t.Fatal("reads changed observation, counters or write callbacks") }
+	// Isolated fault injection: current lookup still works after history fails.
+	if _, err := st.DB().Exec(`DROP TABLE observation_versions`); err != nil { t.Fatal(err) }
+	r := request("GET", path+"?include_history=true", "")
+	if r.Code != 500 || !strings.Contains(r.Body.String(), "Failed to read observation history") { t.Fatalf("history failure = %d: %s", r.Code, r.Body.String()) }
+	if request("GET", path, "").Body.String() != before || writes.Load() != 0 { t.Fatal("failed read changed observation or write callbacks") }
+}
+
+func TestHandleGetObservationHistoryIntegerIdentity(t *testing.T) {
+	st := newServerTestStore(t)
+	if err := st.CreateSession("identity", "owner", t.TempDir()); err != nil { t.Fatal(err) }
+	id, err := st.AddObservation(store.AddObservationParams{SessionID: "identity", Project: "owner", Type: "note", Title: "title", Content: "body"})
+	if err != nil { t.Fatal(err) }
+	// Fixture setup only: exercise an identity above float64's exact integer range.
+	const largeID int64 = 9007199254740993
+	if _, err := st.DB().Exec("UPDATE observations SET id = ? WHERE id = ?", largeID, id); err != nil { t.Fatal(err) }
+	r := httptest.NewRecorder()
+	New(st, 0).Handler().ServeHTTP(r, httptest.NewRequest("GET", fmt.Sprintf("/observations/%d?include_history=true", largeID), nil))
+	var result struct { ID int64 `json:"id"`; Content string `json:"content"` }
+	if err := json.Unmarshal(r.Body.Bytes(), &result); err != nil { t.Fatal(err) }
+	if r.Code != 200 || result.ID != largeID || result.Content != "body" { t.Fatalf("identity = %d: %s", r.Code, r.Body.String()) }
+}
+
 func TestGenerationInvalidationRequestsOneShutdown(t *testing.T) {
 	for _, path := range []string{"/health", "/stats?all_projects=true"} {
 		t.Run(path, func(t *testing.T) {

@@ -1618,6 +1618,8 @@ const MEMORY_TOOL_SCHEMAS: Record<string, ReturnType<typeof Type.Object>> = {
     expected_project: Type.String({ description: "Explicit expected owner of the observation" }),
     title: optionalString("New title"),
     content: optionalString("New content"),
+    find: optionalString("Literal text to replace; use with replace instead of content"),
+    replace: optionalString("Replacement text; may be empty"),
     type: optionalString("New type/category"),
     scope: optionalString("New scope: project, personal, or global"),
     topic_key: optionalString("New topic key"),
@@ -1659,6 +1661,8 @@ const MEMORY_TOOL_SCHEMAS: Record<string, ReturnType<typeof Type.Object>> = {
   }),
   mem_get_observation: Type.Object({
     id: Type.Number({ description: "Observation ID to retrieve" }),
+    include_history: optionalBoolean("Include a bounded page of previous versions"),
+    history_cursor: Type.Optional(Type.Integer({ minimum: 0, description: "Continue before this version; zero requests the latest page" })),
   }),
   mem_session_start: Type.Object({
     id: Type.String({ description: "Unique session identifier" }),
@@ -1818,7 +1822,7 @@ async function callMemoryTool(toolName: string, params: Record<string, unknown>,
       if (!requestedProject) requireResolvedProject();
       return fetch(`/timeline${queryString({ observation_id: params.observation_id, before: params.before, after: params.after, project: activeProject })}`);
     case "mem_get_observation":
-      return fetch(`/observations/${encodeURIComponent(String(params.id))}`);
+      return fetch(`/observations/${encodeURIComponent(String(params.id))}${queryString({ include_history: params.include_history, history_cursor: params.history_cursor })}`);
     case "mem_save": {
       const content = typeof params.content === "string" && params.content.trim()
         ? params.content
@@ -1847,6 +1851,8 @@ async function callMemoryTool(toolName: string, params: Record<string, unknown>,
         body: {
           title: params.title,
           content: params.content,
+          find: params.find,
+          replace: params.replace,
           type: params.type,
           scope: params.scope,
           topic_key: params.topic_key,
