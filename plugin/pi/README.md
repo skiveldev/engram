@@ -109,6 +109,26 @@ separated from Pi-owned attribution, leases, continuation, and recovery. Resolvi
 public shape differences requires a separately scoped production change or an
 explicit contract disposition; the named variants above have explicit dispositions.
 
+### Current-project public-response evidence
+
+The same guarded `release-agent-contract.test.mjs` command above also checks
+`mem_current_project` against independently specified fixture expectations.
+An owned canonical directory contains `.engram/config.json` naming
+`fixture-config-project`; the Go child clears only `ENGRAM_PROJECT` to isolate
+that detection oracle. HTTP and registered Pi calls with explicit `cwd` or
+omitted `cwd` (using the host context directory) return the complete matching
+payload: config source, canonical project path/cwd and null available projects,
+without warnings or error hints. Pi renders that JSON unchanged.
+
+MCP instead returns its configured process override `parity`, source
+`process_override`, empty project path, null available projects and the Go
+package process cwd (`internal/mcp` under the worktree). It does not use the Pi
+caller's directory; this supported variant is not cwd parity. Each of these four
+reads preserves every publicly exported stored field and all global statistics,
+with only validated export-generation metadata compared separately. Actual
+payloads are emitted before assertions. Ambiguity/error cases, SDK dispatch,
+host lifecycle and full T2 release acceptance remain outside this bounded proof.
+
 ### Observation public-response evidence
 
 From `plugin/pi`, with offline Go dependencies and isolated `TMPDIR`, `GOTMPDIR`,

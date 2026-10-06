@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
@@ -62,10 +62,10 @@ test("exact ProfileAgent set and Pi registrations allow only three named admin e
   assert.equal(agent.length, 19);
   assert.deepEqual([...tools.keys()].sort(), [...agent, ...extras].sort());
 });
-test("paired public context max_bytes dispositions preserve stored counters", async () => {
+test("paired public context and current-project dispositions preserve public state", async (t) => {
   const dir = mkdtempSync(join(scratch, "protocol-"));
   const child = spawn("go", ["test", "./internal/mcp", "-run", "^TestPiAgentContractBridge$", "-count=1"], {
-    cwd: root, env: { ...process.env, ENGRAM_PARITY_BRIDGE: dir }, stdio: ["ignore", "pipe", "pipe"],
+    cwd: root, env: { ...process.env, ENGRAM_PROJECT: "", ENGRAM_PARITY_BRIDGE: dir }, stdio: ["ignore", "pipe", "pipe"],
   });
   let output = "";
   child.stdout.on("data", (chunk) => { output += chunk; });
@@ -130,6 +130,55 @@ test("paired public context max_bytes dispositions preserve stored counters", as
       }
       assert.deepEqual(await stats(), before, "read/rejected input must not mutate stored counters");
     }
+
+    // HTTP current-project resolution consults ENGRAM_PROJECT before detection;
+    // the child clears that one override so the owned config is the oracle.
+    const configDir = realpathSync(mkdtempSync(join(scratch, "current-project-")));
+    mkdirSync(join(configDir, ".engram"));
+    writeFileSync(join(configDir, ".engram", "config.json"), JSON.stringify({ project_name: "fixture-config-project" }));
+    const publicJSON = async (path) => {
+      const response = await fetch(`${url}${path}`);
+      assert.equal(response.status, 200);
+      return response.json();
+    };
+    const snapshot = async () => {
+      const exported = await publicJSON("/export");
+      assert.equal(typeof exported.exported_at, "string");
+      assert.ok(Number.isFinite(Date.parse(exported.exported_at)));
+      const { exported_at, ...stored } = exported;
+      return { stored, stats: await stats() };
+    };
+    const readCurrent = async (label, operation) => {
+      const prior = await snapshot();
+      try {
+        const result = await operation();
+        t.diagnostic(`${label}: ${JSON.stringify(result)}`);
+        return result;
+      } finally {
+        assert.deepEqual(await snapshot(), prior, `${label}: every stored field and global counter unchanged`);
+      }
+    };
+    const expectedConfig = {
+      project: "fixture-config-project", project_source: "config", project_path: configDir,
+      cwd: configDir, available_projects: null,
+    };
+    const httpCurrent = await readCurrent("HTTP current project", () => publicJSON(`/project/current?${new URLSearchParams({ cwd: configDir })}`));
+    assert.deepEqual(httpCurrent, expectedConfig);
+    for (const args of [{ cwd: configDir }, {}]) {
+      const piCurrent = await readCurrent(`Pi current project ${Object.hasOwn(args, "cwd") ? "explicit" : "host"} cwd`, () =>
+        registered.get("mem_current_project").execute("current", args, undefined, undefined, { ...ctx, cwd: configDir }));
+      assert.notEqual(piCurrent.isError, true);
+      assert.deepEqual(piCurrent.details.data, httpCurrent, "complete HTTP/Pi payload");
+      assert.deepEqual(piCurrent.content, [{ type: "text", text: JSON.stringify(httpCurrent, null, 2) }]);
+    }
+    const mcpCurrent = await readCurrent("MCP current project", () => rpc("mem_current_project", {}));
+    assert.notEqual(mcpCurrent.isError, true);
+    assert.equal(mcpCurrent.content.length, 1);
+    assert.equal(mcpCurrent.content[0].type, "text");
+    assert.deepEqual(JSON.parse(mcpCurrent.content[0].text), {
+      project: "parity", project_source: "process_override", project_path: "",
+      cwd: join(root, "internal", "mcp"), available_projects: null,
+    });
   } finally {
     if (previous === undefined) delete process.env.ENGRAM_URL; else process.env.ENGRAM_URL = previous;
     if (url) await fetch(`${url}/stop`, { method: "POST" });
