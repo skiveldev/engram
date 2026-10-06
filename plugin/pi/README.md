@@ -19,6 +19,32 @@ Pi is great at doing the work in front of it. The problem is everything around t
 
 Engram is persistent memory for AI coding agents. `gentle-engram` connects Pi to that memory so your agent can save the useful parts of a session and retrieve them later — without stuffing raw tool output back into the prompt.
 
+## Packed release validation
+
+From an extracted npm tarball, run the shipped validator with factual installer
+source from the matching core candidate:
+
+```sh
+node test/release-contract.mjs refs/tags/pi-v0.2.0 --core-evidence /absolute/path/to/internal/setup/setup.go
+```
+
+The evidence must contain exactly one canonical installer pin equal to the package
+version. Missing, malformed, ambiguous, or mismatched evidence fails closed. This
+checks tag/package/installer agreement and shipped CLI guidance, not provenance or
+publication readiness. Without the option, checkout invocation still reads the
+repository's `internal/setup/setup.go`; an extracted package cannot supply that
+sibling implicitly. Default checkout failures retain Node's thrown errors and
+stack traces (including `ENOENT` for absent installer source); missing or ambiguous
+pins likewise throw `Error`. Explicit `--core-evidence` failures instead report
+bounded diagnostics without stack traces. Invalid option syntax reports
+`Pi release contract requires --core-evidence <setup.go path>`.
+
+Public tool/schema comparison is structural evidence only. Shared response and
+storage semantics need executable public-interface checks. Pi session ownership,
+registration retries, and recovery are host-specific behavior tested separately;
+MCP is not claimed to reproduce Pi's host lifecycle. Full 19-tool semantic parity
+remains a separate release gate.
+
 ## Local bridge ownership protocol
 
 Native Engram exposes a session-scoped responder on the local `pi.events` bus after

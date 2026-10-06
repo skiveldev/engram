@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -35,6 +35,117 @@ test("packed Pi tests include their release validator dependency", () => {
 	for (const path of ["test/release-contract.mjs", "test/release-version-contract.test.mjs", "release/version-contract.mjs"]) {
 		assert.ok(paths.has(path), `npm pack must include ${path}`);
 	}
+});
+
+function releaseScratchRoot(cwd) {
+	const common = execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd, encoding: "utf8" }).trim();
+	assert.equal(statSync(common).isDirectory(), true);
+	return join(common, "gentle-checks/t2-packed-correction");
+}
+
+test("release scratch resolves the common Git directory from nested and linked worktrees", () => {
+	const root = fileURLToPath(new URL("../../../", import.meta.url));
+	assert.equal(releaseScratchRoot(fileURLToPath(new URL("../", import.meta.url))), releaseScratchRoot(root));
+	// Existing linked layout is read-only evidence; ordinary CI need not create it.
+	const linked = join(root, ".git/unit-worktrees/t2-history");
+	if (existsSync(linked)) {
+		assert.equal(statSync(join(linked, ".git")).isFile(), true);
+		assert.throws(() => readFileSync(join(linked, ".git/gentle-checks")), { code: "ENOTDIR" });
+		assert.equal(releaseScratchRoot(linked), releaseScratchRoot(root));
+	}
+});
+
+test("checkout release validator preserves legacy diagnostics without mutating evidence", (t) => {
+	const scratchRoot = releaseScratchRoot(fileURLToPath(new URL("../../../", import.meta.url)));
+	mkdirSync(scratchRoot, { recursive: true });
+	const scratch = mkdtempSync(join(scratchRoot, "checkout-"));
+	const core = fileURLToPath(new URL("../../../internal/setup/setup.go", import.meta.url));
+	const coreBefore = readFileSync(core);
+	const results = [];
+	for (const [name, source, diagnostic] of [
+		["unreadable", undefined, /Error: ENOENT: no such file or directory/],
+		["missing", "not installer evidence", /Error: Pi installer pin npm:gentle-engram@<version> is missing from internal\/setup\/setup.go/],
+		["ambiguous", 'piGentleEngramPackage = "npm:gentle-engram@0.2.0"\npiGentleEngramPackage = "npm:gentle-engram@0.2.0"', /Error: Pi installer pin npm:gentle-engram@<version> is ambiguous in internal\/setup\/setup.go/],
+	]) {
+		const root = join(scratch, name);
+		const files = ["test/release-contract.mjs", "release/version-contract.mjs", "package.json"];
+		const bytes = files.map((path) => readFileSync(new URL(`../${path}`, import.meta.url)));
+		for (const [i, path] of files.entries()) {
+			const target = join(root, "plugin/pi", path);
+			mkdirSync(join(target, ".."), { recursive: true });
+			writeFileSync(target, bytes[i]);
+		}
+		const evidence = join(root, "internal/setup/setup.go");
+		if (source !== undefined) {
+			mkdirSync(join(evidence, ".."), { recursive: true });
+			writeFileSync(evidence, source);
+		}
+		const result = spawnSync(process.execPath, [join(root, "plugin/pi/test/release-contract.mjs"), `refs/tags/pi-v${pkg.version}`], { cwd: root, encoding: "utf8" });
+		t.diagnostic(`${name} stderr:\n${result.stderr}`);
+		results.push({ result, diagnostic });
+		files.forEach((path, i) => assert.deepEqual(readFileSync(join(root, "plugin/pi", path)), bytes[i]));
+		assert.equal(existsSync(evidence), source !== undefined);
+		if (source !== undefined) assert.equal(readFileSync(evidence, "utf8"), source);
+		assert.deepEqual(readFileSync(core), coreBefore);
+	}
+	for (const { result, diagnostic } of results) {
+		assert.equal(result.status, 1);
+		assert.equal(result.stdout, "");
+		assert.match(result.stderr, diagnostic);
+		assert.match(result.stderr, /\n\s+at /);
+	}
+});
+
+test("extracted release validator requires explicit factual core evidence", () => {
+	const scratchRoot = releaseScratchRoot(fileURLToPath(new URL("../../../", import.meta.url)));
+	mkdirSync(scratchRoot, { recursive: true });
+	const scratch = mkdtempSync(join(scratchRoot, "packed-"));
+	const [manifest] = JSON.parse(execFileSync("npm", ["pack", "--ignore-scripts", "--json", "--pack-destination", scratch], {
+		cwd: fileURLToPath(new URL("../", import.meta.url)), encoding: "utf8",
+	}));
+	execFileSync("tar", ["-xzf", join(scratch, manifest.filename), "-C", scratch]);
+	const helper = join(scratch, "package/test/release-contract.mjs");
+	const core = fileURLToPath(new URL("../../../internal/setup/setup.go", import.meta.url));
+	const artifacts = [core, helper, join(scratch, "package/package.json"), join(scratch, manifest.filename)];
+	const before = artifacts.map((path) => readFileSync(path));
+	const run = (...args) => spawnSync(process.execPath, [helper, `refs/tags/pi-v${pkg.version}`, ...args], {
+		cwd: scratch, encoding: "utf8",
+	});
+	const paired = run("--core-evidence", core);
+	assert.equal(paired.status, 0, paired.stderr);
+	assert.equal(paired.stdout, "");
+	assert.equal(paired.stderr, "");
+	const fixture = join(scratch, "setup.go");
+	const cases = [
+		[[], /Error: ENOENT: no such file or directory/],
+		...[["--core-evidence"], ["--unknown", core], ["--core-evidence", ""], ["--core-evidence", core, "extra"], ["--core-evidence", core, "--core-evidence", core]].map((args) =>
+			[args, "Pi release contract requires --core-evidence <setup.go path>\n"]),
+		[["--core-evidence", join(scratch, "absent.go")], "Pi release contract cannot read core installer evidence\n"],
+	];
+	for (const [source, diagnostic] of [
+		['piGentleEngramPackage = "npm:gentle-engram@0.2.0"\npiGentleEngramPackage = "npm:gentle-engram@0.2.0"', "Pi installer pin npm:gentle-engram@<version> is ambiguous in internal/setup/setup.go\n"],
+		["not installer evidence", "Pi installer pin npm:gentle-engram@<version> is missing from internal/setup/setup.go\n"],
+		['piGentleEngramPackage = "npm:gentle-engram@00.2.0"', "installerVersion must be a canonical SemVer 2.0 string\n"],
+		['piGentleEngramPackage = "npm:gentle-engram@0.0.0"', `installerVersion 0.0.0 must match package version ${pkg.version}\n`],
+	]) {
+		writeFileSync(fixture, source);
+		const result = run("--core-evidence", fixture);
+		assert.equal(result.status, 1);
+		assert.equal(result.stdout, "");
+		assert.equal(result.stderr, diagnostic);
+		assert.equal(readFileSync(fixture, "utf8"), source);
+	}
+	for (const [args, diagnostic] of cases) {
+		const result = run(...args);
+		assert.equal(result.status, 1);
+		assert.equal(result.stdout, "");
+		if (diagnostic instanceof RegExp) {
+			assert.match(result.stderr, diagnostic);
+			assert.match(result.stderr, /\n\s+at /);
+		} else assert.equal(result.stderr, diagnostic);
+	}
+	artifacts.forEach((path, i) => assert.deepEqual(readFileSync(path), before[i], `${path} must remain unchanged`));
+	assert.equal(existsSync(join(scratchRoot, "internal/setup/setup.go")), false);
 });
 
 const LEGACY_PACKAGE_NAMES = ["npm:gentle-engram@0.1.8", "npm:gentle-engram@0.1.11", "npm:gentle-engram@0.1.12", "npm:gentle-engram@0.1.14", "npm:gentle-engram@0.1.15", "npm:gentle-engram@0.1.16"];
