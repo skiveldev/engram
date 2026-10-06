@@ -108,6 +108,32 @@ separated from Pi-owned attribution, leases, continuation, and recovery. Resolvi
 public shape differences requires a separately scoped production change or an
 explicit contract disposition; the named variants above have explicit dispositions.
 
+### SDK host-validation evidence
+
+The host integration is intentionally outside the default npm test glob. With an
+installed SDK and offline Go dependencies, run from `plugin/pi` with isolated
+`TMPDIR`, `GOTMPDIR`, and `GOCACHE` under Git's common directory:
+
+```sh
+test -f test/pi-host-validation.mjs && ENGRAM_PI_SDK_ROOT=/absolute/path/to/installed/pi-coding-agent node --test test/pi-host-validation.mjs
+```
+
+Missing SDK dependencies fail rather than skip or install. The harness discards
+ambient credentials before importing the SDK, isolates HOME/agent/auth/model/
+settings/session roots, and loads only Engram plus a test helper and loopback
+provider. An assistant-issued helper dispatches through public `ctx.executeTool`
+with the `host_probe`/`mem_context` allowlist; no private dispatch API is used.
+
+The seeded project and real HTTP query recorder prove that SDK input `1.5` reaches
+core as `max_bytes=1`, whereas `0` and `-1` are rejected with no `/context` request.
+Valid controls `1` and `1000000000` reach the handler unchanged. MCP's fallback for
+fractional/nonpositive values remains a separate supported runtime variant.
+Every stored export field and counter is compared around each nested dispatch;
+only export-generation metadata is validated separately. Normal startup, prompt,
+and passive-capture lifecycle writes are recorded separately, not claimed absent.
+This narrow host proof does not establish lifecycle equivalence with MCP or close
+observation pairing and the remaining 19-tool semantic release gates.
+
 ## Local bridge ownership protocol
 
 Native Engram exposes a session-scoped responder on the local `pi.events` bus after
