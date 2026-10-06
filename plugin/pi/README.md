@@ -19,6 +19,34 @@ Pi is great at doing the work in front of it. The problem is everything around t
 
 Engram is persistent memory for AI coding agents. `gentle-engram` connects Pi to that memory so your agent can save the useful parts of a session and retrieve them later — without stuffing raw tool output back into the prompt.
 
+## Public contract evidence (release gate still pending)
+
+The focused contract fixture compares actual JSON-RPC MCP `tools/list` with
+registered Pi schemas: exactly 19 agent tools and only `mem_delete`, `mem_stats`,
+and `mem_timeline` as Pi admin extras. Its TypeBox stub records declarations;
+it does not execute full TypeBox validation or prove host lifecycle equivalence.
+
+Explicit supported schema variants:
+
+- `mem_save`, `mem_save_prompt`, `mem_session_summary`: Pi exposes `cwd`;
+  MCP exposes `session_id`, `recovery_token`, and `project_choice_reason`.
+- `mem_capture_passive`: MCP exposes `session_id`; Pi owns the host session.
+- `mem_current_project`: Pi exposes `cwd`; MCP does not.
+- `mem_context.max_bytes`: MCP declares number and preserves invalid-value
+  fallback; Pi declares integer with minimum 1.
+- `mem_get_observation.history_cursor`: MCP declares number; Pi declares integer
+  with minimum 0.
+- `mem_get_observation.project`: MCP-only optional string selecting response
+  context, not an observation-ID ownership filter; absent from Pi. The fixture
+  asserts these exact shapes, not a blanket unknown-field exclusion.
+
+Direct stub-registered Pi execution bypasses host validation. This protocol fixture
+pairs valid context inputs through real MCP/HTTP and separately checks MCP's
+fractional/nonpositive fallback. Real SDK validation evidence is a separate work
+unit; this slice does not prove host validation or lifecycle equivalence.
+Observation project-context/pagination pairing and other-tool semantic proof remain
+pending; schema comparisons alone are not release acceptance.
+
 ## Packed release validation
 
 From an extracted npm tarball, run the shipped validator with factual installer
@@ -44,6 +72,41 @@ storage semantics need executable public-interface checks. Pi session ownership,
 registration retries, and recovery are host-specific behavior tested separately;
 MCP is not claimed to reproduce Pi's host lifecycle. Full 19-tool semantic parity
 remains a separate release gate.
+
+### Public contract gate inventory
+
+Run the dedicated structural gate explicitly (a combined Node invocation may silently
+ignore a missing filename):
+
+```sh
+test -f test/release-agent-contract.test.mjs && node --test test/release-agent-contract.test.mjs
+```
+
+It compares all 19 MCP `tools/list` argument names/types/requiredness with actual Pi
+registrations, including Pi numeric constraints; descriptions are not compared.
+Only `mem_delete`, `mem_stats`, and `mem_timeline` are allowed extra tools. It
+also executes MCP context handlers and pairs valid context calls with real HTTP.
+The following exact-shape variants are explicitly retained, not claimed equivalent:
+
+| Tools | Public difference |
+| --- | --- |
+| `mem_save`, `mem_save_prompt`, `mem_session_summary` | Pi omits MCP `session_id`, `project_choice_reason`, `recovery_token`; Pi adds `cwd`. |
+| `mem_capture_passive` | Pi omits model `session_id`; host attribution is tested separately. |
+| `mem_context` | Pi `max_bytes` is integer ≥1; MCP schema declares number. |
+| `mem_get_observation` | Pi omits `project`; Pi cursor is integer ≥0, MCP schema declares number. |
+| `mem_current_project` | Pi adds `cwd`. |
+
+The other 12 public shapes match; matching shapes do not prove matching behavior.
+Existing `native-tool-contract.test.mjs` executable evidence covers real HTTP save
+persistence and prompt persistence, plus registered-tool wire tests for search,
+context, history/update, review, project listing, and pin/unpin. Those wire tests
+use simulated responses and must not be called real core-effect or MCP parity proof.
+Shared semantic gates still need paired response/error/effect checks for all tools,
+particularly topic-key suggestion, passive capture, summary, project detection,
+doctor, judgment and comparison. Session start/end common wire behavior must be
+separated from Pi-owned attribution, leases, continuation, and recovery. Resolving
+public shape differences requires a separately scoped production change or an
+explicit contract disposition; the named variants above have explicit dispositions.
 
 ## Local bridge ownership protocol
 
