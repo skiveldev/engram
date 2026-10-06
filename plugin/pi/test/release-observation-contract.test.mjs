@@ -153,6 +153,37 @@ test("paired observation defaults, chronological pagination and MCP-only respons
     assert.ok(Object.hasOwn(contextEnvelope, "project_path"));
     assert.equal(contextEnvelope.result, baseline.envelope.result, "context is not ID ownership filtering");
     for (const key of historyKeys) assert.equal(Object.hasOwn(contextEnvelope, key), false);
+
+    // Direct registered execution observes HTTP forwarding, not SDK validation.
+    const missingId = id + 1000000;
+    const cursorError = "history_cursor must be a non-negative integer";
+    const rejected = [
+      { args: { id: missingId }, status: 404, message: "observation not found", mcpMessage: `Observation #${missingId} not found` },
+      { args: { id: missingId, include_history: true, history_cursor: -1 }, status: 404, message: "observation not found", mcpMessage: `Observation #${missingId} not found` },
+      ...[-1, 1.5, "not-a-number"].map((history_cursor) => ({
+        args: { id, include_history: true, history_cursor }, status: 400, message: cursorError, mcpMessage: cursorError,
+      })),
+    ];
+    for (const { args, status, message, mcpMessage } of rejected) {
+      const query = new URLSearchParams(Object.entries(args).filter(([key]) => key !== "id").map(([key, value]) => [key, String(value)]));
+      await read("rejected HTTP observation", async () => {
+        const response = await fetch(`${url}/observations/${args.id}?${query}`);
+        assert.equal(response.status, status);
+        assert.equal(response.headers.get("content-type"), "application/json");
+        assert.equal(await response.text(), `${JSON.stringify({ error: message })}\n`);
+      });
+      await read("rejected registered Pi observation", async () => {
+        const result = await tool.execute("rejected", args, undefined, undefined, ctx);
+        assert.equal(result.isError, true);
+        assert.deepEqual(result.content, [{ type: "text", text: message }]);
+        assert.deepEqual(result.details, { error: message, http_status: status, data: { error: message } });
+      });
+      await read("rejected MCP observation", async () => {
+        const result = await rpc(args);
+        assert.equal(result.isError, true);
+        assert.deepEqual(result.content, [{ type: "text", text: mcpMessage }]);
+      });
+    }
   } finally {
     if (previous === undefined) delete process.env.ENGRAM_URL; else process.env.ENGRAM_URL = previous;
     if (url) await fetch(`${url}/stop`, { method: "POST" });

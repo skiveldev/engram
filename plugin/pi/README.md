@@ -129,9 +129,17 @@ and all statistics counters; only `exported_at` generation metadata is validated
 separately. MCP's alternate `project` response context still returns the original
 observation: it is not an ownership filter and has no equivalent Pi argument.
 
-This sandbox bypasses SDK validation. It does not prove invalid-input equivalence,
-HTTP error contracts, or host lifecycle parity. Global T2 and the remaining
-19-tool semantic/release gates remain pending.
+The same fixture checks missing positive IDs and, with history enabled, negative,
+fractional and invalid-text cursors. HTTP returns exact JSON error bodies (including
+its newline), content type and 404/400 status; registered Pi execution preserves
+HTTP error text, status and data. MCP returns its own tool-error text and flag.
+Missing IDs take precedence over invalid cursors. Every rejected call preserves
+all exported stored fields and counters, just like successful reads.
+
+This sandbox bypasses SDK validation: direct invalid arguments demonstrate core
+and wire error contracts, not which inputs the Pi host accepts or rejects. MCP
+and HTTP errors retain their distinct formats; lifecycle parity and global T2's
+remaining 19-tool semantic/release gates remain pending.
 
 ### SDK host-validation evidence
 
