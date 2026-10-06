@@ -177,6 +177,45 @@ for (const failure of ["shutdown", "archive", "recovery"]) {
   });
 }
 
+test("mem_save content and observation alias preserve Go precedence and reject blank writes", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalUrl = process.env.ENGRAM_URL;
+  process.env.ENGRAM_URL = "http://127.0.0.1:17437";
+  const { calls, fetchStub } = recordingFetch([
+    { method: "GET", path: "/project/current", body: { project: "engram" } },
+  ]);
+  globalThis.fetch = fetchStub;
+  try {
+    await withPluginSandbox("engram-pi-save-alias-", async ({ sandbox }) => {
+      const { registeredTools } = await loadPluginHarness(sandbox);
+      const save = registeredTools.get("mem_save");
+      const ctx = runtimeContext("alias-session");
+      for (const [params, expected] of [
+        [{ observation: "  alias only  " }, "  alias only  "],
+        [{ content: " \n", observation: "fallback" }, "fallback"],
+        [{ content: " primary ", observation: "secondary" }, " primary "],
+        [{ content: "existing content" }, "existing content"],
+      ]) {
+        const result = await save.execute("alias", { title: "alias", ...params }, undefined, undefined, ctx);
+        assert.notEqual(result.isError, true);
+        assert.equal(calls.filter(({ path }) => path === "/observations").at(-1).body.content, expected);
+      }
+      for (const params of [{}, { content: " " }, { observation: "\t" }, { content: " ", observation: "\n" }]) {
+        const before = calls.filter(({ method }) => method === "POST").length;
+        const result = await save.execute("blank", { title: "blank", ...params }, undefined, undefined, ctx);
+        assert.equal(result.isError, true);
+        assert.match(result.content[0].text, /content is required/);
+        assert.equal(calls.filter(({ method }) => method === "POST").length, before);
+      }
+      assert.equal(save.parameters.args[0].content.kind, "Optional");
+      assert.equal(save.parameters.args[0].observation.kind, "Optional");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalUrl === undefined) delete process.env.ENGRAM_URL; else process.env.ENGRAM_URL = originalUrl;
+  }
+});
+
 function runtimeContext(sessionId) {
   return {
     cwd: ROOT,
@@ -630,6 +669,47 @@ test("fresh Pi state honors a structured session-project conflict without captur
     process.stderr.write = originalStderrWrite;
     if (originalUrl === undefined) delete process.env.ENGRAM_URL;
     else process.env.ENGRAM_URL = originalUrl;
+  }
+});
+
+test("registered Pi-native mem_search forwards compact format and preserves omitted-format requests", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalUrl = process.env.ENGRAM_URL;
+  process.env.ENGRAM_URL = "http://127.0.0.1:17437";
+  const payload = [{ id: 1, title: "Compact fixture", preview: "needle", truncated: false }];
+  const { calls, fetchStub } = recordingFetch([
+    { method: "GET", path: "/health", body: { status: "ok" } },
+    { method: "GET", path: "/project/current", body: { project: "engram" } },
+    { method: "GET", path: "/search", body: payload },
+  ]);
+  globalThis.fetch = fetchStub;
+  try {
+    await withPluginSandbox("engram-pi-search-format-", async ({ sandbox }) => {
+      const { registeredTools } = await loadPluginHarness(sandbox);
+      const tool = registeredTools.get("mem_search");
+      assert.equal(tool.parameters.args[0].response_format?.kind, "Optional");
+      assert.equal(tool.parameters.args[0].response_format.args[0].kind, "String");
+      for (const format of ["compact", undefined]) {
+        const params = { query: "needle & spaces", project: "engram", type: "decision", scope: "project", limit: 2, match_mode: "any" };
+        if (format !== undefined) params.response_format = format;
+        const result = await tool.execute("search-format", params, undefined, undefined, runtimeContext("search-owner"));
+        assert.notEqual(result.isError, true);
+        assert.deepEqual(JSON.parse(result.content[0].text), payload);
+        const searches = calls.filter(call => call.path.startsWith("/search?"));
+        const request = searches.at(-1);
+        assert.equal(request.method, "GET");
+        assert.equal(request.body, undefined);
+        const query = Object.fromEntries(new URL(request.path, "http://localhost").searchParams);
+        const expected = { q: params.query, type: "decision", project: "engram", scope: "project", limit: "2", match_mode: "any" };
+        if (format !== undefined) expected.response_format = format;
+        assert.deepEqual(query, expected);
+        assert.equal(searches.length, format === "compact" ? 1 : 2, "one request per call, no replay");
+      }
+      assert.equal(calls.some(call => call.method !== "GET"), false, "reads must not register sessions or save data");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalUrl === undefined) delete process.env.ENGRAM_URL; else process.env.ENGRAM_URL = originalUrl;
   }
 });
 

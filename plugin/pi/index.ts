@@ -1600,10 +1600,12 @@ const MEMORY_TOOL_SCHEMAS: Record<string, ReturnType<typeof Type.Object>> = {
     limit: optionalNumber("Max results"),
     all_projects: optionalBoolean("Search across every project; when true project is ignored"),
     match_mode: optionalString("Match mode: all (default) or any for broader recall"),
+    response_format: optionalString("Response format: compact for bounded previews and structured relations; omit for the existing HTTP response"),
   }),
   mem_save: Type.Object({
     title: Type.String({ description: "Short, searchable title" }),
-    content: Type.String({ description: "Structured memory content" }),
+    content: optionalString("Structured memory content; required unless observation is provided"),
+    observation: optionalString("Backward-compatible alias for content"),
     type: optionalString("Observation type/category"),
     scope: optionalString("Scope: project, personal, or global"),
     topic_key: optionalString("Stable topic key for upserts"),
@@ -1799,6 +1801,7 @@ async function callMemoryTool(toolName: string, params: Record<string, unknown>,
         scope: params.scope,
         limit: params.limit,
         match_mode: params.match_mode,
+        response_format: params.response_format,
         all_projects: params.all_projects,
       })}`);
     case "mem_context":
@@ -1817,6 +1820,10 @@ async function callMemoryTool(toolName: string, params: Record<string, unknown>,
     case "mem_get_observation":
       return fetch(`/observations/${encodeURIComponent(String(params.id))}`);
     case "mem_save": {
+      const content = typeof params.content === "string" && params.content.trim()
+        ? params.content
+        : typeof params.observation === "string" && params.observation.trim() ? params.observation : undefined;
+      if (content === undefined) throw new Error("content is required for mem_save (use content, or observation for backward-compatible clients)");
       if (!requestedProject) requireResolvedProject();
       if (writeState) assertOpen(writeState, writeEpoch!);
       const activeSessionId = await registeredSessionForWrite(activeProject);
@@ -1826,7 +1833,7 @@ async function callMemoryTool(toolName: string, params: Record<string, unknown>,
         body: {
           session_id: activeSessionId,
           title: params.title,
-          content: params.content,
+          content,
           type: params.type || "manual",
           project: activeProject,
           scope: params.scope || "project",

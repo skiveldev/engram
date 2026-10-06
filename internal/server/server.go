@@ -765,6 +765,11 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "q parameter is required")
 		return
 	}
+	responseFormat := params.Get("response_format")
+	if responseFormat != "" && responseFormat != "compact" {
+		jsonError(w, http.StatusBadRequest, fmt.Sprintf("invalid response_format %q: must be \"compact\"", responseFormat))
+		return
+	}
 
 	resolved, err := s.resolveRequestProject(r, projectpkg.ResolutionCurrent, true)
 	if err != nil {
@@ -775,6 +780,14 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	matchMode := params.Get("match_mode")
 	if matchMode != "" && matchMode != "all" && matchMode != "any" {
 		jsonError(w, http.StatusBadRequest, fmt.Sprintf("invalid match_mode %q: must be \"all\" or \"any\"", matchMode))
+		return
+	}
+
+	if responseFormat == "compact" {
+		s.handleCompactSearch(w, r, query, store.SearchOptions{
+			Type: params.Get("type"), Project: resolved.Project, Scope: params.Get("scope"),
+			Limit: queryInt(r, "limit", 10), MatchMode: matchMode,
+		})
 		return
 	}
 
@@ -794,6 +807,56 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse(w, http.StatusOK, results)
+}
+
+// handleCompactSearch mirrors MCP's compact result metadata without changing the
+// legacy HTTP search response. Store previews preserve Unicode and bound content.
+func (s *Server) handleCompactSearch(w http.ResponseWriter, r *http.Request, query string, options store.SearchOptions) {
+	results, err := s.store.SearchPreviewsContext(r.Context(), query, options)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	syncIDs := make([]string, 0, len(results))
+	for _, result := range results {
+		if result.SyncID != "" {
+			syncIDs = append(syncIDs, result.SyncID)
+		}
+	}
+	relations := map[string]store.ObservationRelations{}
+	if len(syncIDs) > 0 {
+		loaded, err := s.store.GetRelationsForObservationsContext(r.Context(), syncIDs)
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			jsonError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if err == nil {
+			relations = loaded
+		}
+		// As in MCP, unavailable relation annotations do not fail the search.
+	}
+	entries := make([]map[string]any, 0, len(results))
+	for _, result := range results {
+		entry := map[string]any{
+			"id": result.ID, "sync_id": result.SyncID, "title": result.Title,
+			"type": result.Type, "state": result.State(), "scope": result.Scope,
+			"pinned": result.Pinned, "preview": result.Preview, "truncated": result.Truncated,
+		}
+		if result.Project != nil {
+			entry["project"] = *result.Project
+		}
+		if result.TopicKey != nil && *result.TopicKey != "" {
+			entry["topic_key"] = *result.TopicKey
+		}
+		if result.ReviewAfter != nil {
+			entry["review_after"] = *result.ReviewAfter
+		}
+		if related, ok := relations[result.SyncID]; ok {
+			entry["relations"] = map[string]any{"as_source": related.AsSource, "as_target": related.AsTarget}
+		}
+		entries = append(entries, entry)
+	}
+	jsonResponse(w, http.StatusOK, entries)
 }
 
 func (s *Server) handleGetObservation(w http.ResponseWriter, r *http.Request) {

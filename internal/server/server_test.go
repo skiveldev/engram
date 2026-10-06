@@ -1358,6 +1358,150 @@ func TestHandleRescueProjectOwnershipClassifiesValidationAndInfrastructureErrors
 	})
 }
 
+func TestHandleSearchCompactPreservesLegacyAndRelations(t *testing.T) {
+	st := newServerTestStore(t)
+	if err := st.CreateSession("compact-http", "compact-project", t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	content := "compact preview " + strings.Repeat("世界", 160)
+	oldID, err := st.AddObservation(store.AddObservationParams{SessionID: "compact-http", Project: "compact-project", Scope: "project", Type: "decision", Title: "Older compact decision", Content: content, TopicKey: "decision/compact"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newID, err := st.AddObservation(store.AddObservationParams{SessionID: "compact-http", Project: "compact-project", Scope: "project", Type: "decision", Title: "Newer compact decision", Content: "compact preview relation"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldObs, err := st.GetObservation(oldID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newObs, err := st.GetObservation(newID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.SaveRelation(store.SaveRelationParams{SyncID: "compact-http-relation", SourceID: newObs.SyncID, TargetID: oldObs.SyncID}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.JudgeRelation(store.JudgeRelationParams{JudgmentID: "compact-http-relation", Relation: store.RelationSupersedes, MarkedByActor: "agent:test", MarkedByKind: "agent"}); err != nil {
+		t.Fatal(err)
+	}
+	srv := New(st, 0)
+	writes := 0
+	srv.SetOnWrite(func() { writes++ })
+	request := func(path string) *httptest.ResponseRecorder {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d: %s", path, rec.Code, rec.Body.String())
+		}
+		return rec
+	}
+	before := request("/stats?all_projects=true").Body.String()
+	for _, format := range []string{"", "compact"} {
+		path := "/search?q=compact+preview&project=compact-project&match_mode=all&type=decision&scope=project&limit=10"
+		if format != "" {
+			path += "&response_format=" + format
+		}
+		rec := request(path)
+		var results []map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &results); err != nil {
+			t.Fatal(err)
+		}
+		if len(results) != 2 {
+			t.Fatalf("format %q: results = %#v", format, results)
+		}
+		for _, entry := range results {
+			if format == "" {
+				if entry["id"] == float64(oldID) && entry["content"] != content {
+					t.Fatalf("legacy content changed: %#v", entry)
+				}
+				if _, exists := entry["preview"]; exists {
+					t.Fatalf("legacy result unexpectedly compact: %#v", entry)
+				}
+				continue
+			}
+			if _, exists := entry["content"]; exists {
+				t.Fatalf("compact result leaked full content: %#v", entry)
+			}
+			if entry["type"] != "decision" || entry["scope"] != "project" || entry["project"] != "compact-project" || entry["state"] != "active" || entry["pinned"] != false {
+				t.Fatalf("compact metadata = %#v", entry)
+			}
+			if entry["id"] == float64(oldID) {
+				if entry["sync_id"] != oldObs.SyncID || entry["title"] != oldObs.Title || entry["preview"] != string([]rune(content)[:300]) || entry["truncated"] != true || entry["topic_key"] != "decision/compact" {
+					t.Fatalf("bounded Unicode preview = %#v", entry)
+				}
+			} else if entry["id"] == float64(newID) {
+				if entry["preview"] != "compact preview relation" || entry["truncated"] != false || entry["sync_id"] != newObs.SyncID || entry["title"] != newObs.Title {
+					t.Fatalf("short preview = %#v", entry)
+				}
+				if _, exists := entry["topic_key"]; exists {
+					t.Fatalf("missing topic key should be omitted: %#v", entry)
+				}
+				relations, ok := entry["relations"].(map[string]any)
+				if !ok {
+					t.Fatalf("relations = %#v", entry["relations"])
+				}
+				source, ok := relations["as_source"].([]any)
+				if !ok || len(source) != 1 || source[0].(map[string]any)["relation"] != "supersedes" {
+					t.Fatalf("source relations = %#v", relations)
+				}
+			} else {
+				t.Fatalf("unexpected observation: %#v", entry)
+			}
+		}
+	}
+	if got := request("/search?q=no-hit&project=compact-project&response_format=compact").Body.String(); strings.TrimSpace(got) != "[]" {
+		t.Fatalf("no hits = %q", got)
+	}
+	var full map[string]any
+	if err := json.Unmarshal(request(fmt.Sprintf("/observations/%d", oldID)).Body.Bytes(), &full); err != nil {
+		t.Fatal(err)
+	}
+	if full["content"] != content {
+		t.Fatalf("read changed observation: %#v", full)
+	}
+	if after := request("/stats?all_projects=true").Body.String(); after != before || writes != 0 {
+		t.Fatalf("search mutated counters or emitted writes: %s -> %s; writes=%d", before, after, writes)
+	}
+}
+
+func TestHandleSearchCompactRejectsInvalidFormatWithoutWrites(t *testing.T) {
+	st := newServerTestStore(t)
+	srv := New(st, 0)
+	writes := 0
+	srv.SetOnWrite(func() { writes++ })
+	stats := func() string {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/stats?all_projects=true", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("stats = %d: %s", rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
+	}
+	before := stats()
+	for _, format := range []string{"verbose", "COMPACT", "compact "} {
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/search?q=compact&response_format="+url.QueryEscape(format), nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("format %q = %d: %s", format, rec.Code, rec.Body.String())
+		}
+		var body map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		want := fmt.Sprintf("invalid response_format %q: must be \"compact\"", format)
+		if body["error"] != want {
+			t.Fatalf("error = %#v, want %q", body, want)
+		}
+		if after := stats(); after != before || writes != 0 {
+			t.Fatalf("invalid search changed counters/writes: %s -> %s; writes=%d", before, after, writes)
+		}
+	}
+}
+
 func TestHandleSearchForwardsMatchModeAndAllProjects(t *testing.T) {
 	st := newServerTestStore(t)
 	h := New(st, 0).Handler()
