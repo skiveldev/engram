@@ -74,6 +74,24 @@ registration retries, and recovery are host-specific behavior tested separately;
 MCP is not claimed to reproduce Pi's host lifecycle. Full 19-tool semantic parity
 remains a separate release gate.
 
+### Public doctor contract evidence
+
+From `plugin/pi`, run `node --test test/release-doctor-contract.test.mjs`.
+The isolated public MCP/HTTP/Pi fixture checks `orphaned_pending_relations`,
+all ten default diagnostics, and an unknown check. It asserts report status,
+summary, ordered check identities, exact unknown-check diagnostics and transport
+error markers. HTTP returns an error report with status 200 for an unknown check;
+MCP and Pi mark that report as a tool error.
+
+Every diagnostic call preserves all public exported stored fields and global
+statistics; export-generation timestamps are validated separately. The SQLite
+lock check runs `wal_checkpoint(PASSIVE)`, so physical database/WAL byte identity
+is not claimed. Only integer-validated `checkpoint_log` and `checkpointed_frames`
+are excluded from cross-transport report equality. An empty-directory owned
+session avoids filesystem detection and active-session clock dependencies.
+Project-resolution failures, anomaly/repair behavior and SDK/lifecycle equivalence
+are not covered by this focused fixture; full T2 preflight remains separate.
+
 ### Public contract gate inventory
 
 Run the dedicated structural gate explicitly (a combined Node invocation may silently
