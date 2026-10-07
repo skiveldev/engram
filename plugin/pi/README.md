@@ -74,6 +74,25 @@ registration retries, and recovery are host-specific behavior tested separately;
 MCP is not claimed to reproduce Pi's host lifecycle. Full 19-tool semantic parity
 remains a separate release gate.
 
+### Public update contract evidence
+
+From `plugin/pi`, run `node --test test/release-update-contract.test.mjs`.
+The real MCP/HTTP/Pi fixture covers ordinary content updates, literal global
+case-sensitive replacement, empty replacement with stored-content trimming,
+no-match no-ops, and no-match replacement with metadata updates. Every success
+compares complete global exports/statistics with only the specified content/type,
+revision and validated update timestamp changing. Public history retains all
+previous versions and captures the previous content only for content changes.
+HTTP/Pi return the complete observation; MCP returns a project/result envelope.
+
+Incomplete replacement pairs, replacement plus content, invalid/missing/mismatched
+`expected_project`, and missing IDs retain distinct transport errors. Rejections
+preserve global records/counters and complete public history. Missing-ID MCP
+currently reports `Failed to update memory: sql: no rows in result set`; HTTP/Pi
+report `observation not found`. This compatibility variant is preserved.
+SDK validation, cross-project process resolution, internal sync-queue effects,
+project reassignment and full T2 preflight are outside this fixture.
+
 ### Public pin/unpin contract evidence
 
 From `plugin/pi`, run `node --test test/release-pin-contract.test.mjs`.
