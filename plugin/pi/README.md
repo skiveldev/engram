@@ -74,6 +74,43 @@ registration retries, and recovery are host-specific behavior tested separately;
 MCP is not claimed to reproduce Pi's host lifecycle. Full 19-tool semantic parity
 remains a separate release gate.
 
+### Public prompt-save contract evidence
+
+From `plugin/pi`, run `node --test test/release-save-prompt-contract.test.mjs`.
+The real HTTP/MCP/registered-Pi fixture seeds owned sessions and sentinel
+observations in two projects, then saves distinct short prompts. Complete global
+exports and `/prompts/recent` readback check every prompt field: generated numeric
+and portable identity, content, project, session and valid creation timestamp.
+Export-generation timestamps are validated separately.
+
+HTTP returns 201 with `id`/`status`; MCP returns a session-project/result envelope
+and byte-based truncation metadata without an ID; Pi returns `prompt_id`/`status`
+with its native text/details envelope. HTTP/MCP use the preseeded shared session
+and change only the prompt row/count. Before Pi initialization, the test writes
+`{"project_name":"other"}` to `.engram/config.json` inside its owned scratch
+directory. Config precedence makes directory history noncontrolling in this fixture.
+Public `mem_current_project` for that same directory must return the complete
+`other`/`config` response with matching path, without changing global state.
+The Pi target is fixed at `parity` before writing; expected satellite identity
+`prompt-parity@parity` comes from those inputs, never from the prompt result.
+
+Pi creates that satellite: an isolated
+`project_owned` session with empty directory and valid start time, plus its linked
+prompt. Both session and prompt counters increase by one. All other exported
+records/fields/counters remain unchanged, compared using sorted copies of complete
+records. This source-supported preparation tests public branch effects in a fresh
+module without registered owners; it does not establish general equivalence with
+Pi's internal owner registry or explain the previous isolated-run failure.
+
+Empty-content rejection after the successful save preserves complete global state
+and counters, including the existing satellite. HTTP/Pi report
+`session_id and content are required`; MCP reports
+`Failed to save prompt: prompt content is required`. Internal lease renewal,
+activity and queues are not covered. Neither rejection before satellite creation,
+omitted-session/recovery/context variants, long-content truncation, retry
+idempotence, total validation, SDK/lifecycle, physical-byte identity nor full T2
+release acceptance is claimed.
+
 ### Public review contract evidence
 
 From `plugin/pi`, run `node --test test/release-review-contract.test.mjs`.
