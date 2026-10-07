@@ -67,7 +67,7 @@ From `plugin/pi`, with offline Go dependencies and an installed Pi SDK:
 
 ```sh
 node --test test/release-schema-capture.test.mjs
-ENGRAM_PI_SDK_ROOT=/absolute/path/to/installed/pi-coding-agent node --test test/release-schema-capture.mjs
+ENGRAM_RELEASE_SOURCE_COMMIT=<full-source-commit> ENGRAM_PI_SDK_ROOT=/absolute/path/to/installed/pi-coding-agent node --test test/release-schema-capture.mjs
 ```
 
 The explicit fixture loads actual plugin registrations with installed TypeBox
@@ -76,8 +76,39 @@ and TUI dependencies, not stubs. It captures 22 Pi schemas and the 19 actual MCP
 `schema-capture.json` remain under Git's common directory at
 `gentle-checks/t3-capture`; Go runs offline. This is registration-time schema
 evidence, not Pi SDK session dispatch or host validation. Callback code is not
-serialized. Full accepted dispositions, candidate/source binding and canonical
-manifest integration are still required before this capture is release evidence.
+serialized. The producer requires the selected full source commit to match HEAD
+and clean tracked/untracked runtime Go/Pi sources, including `go.mod`/`go.sum`,
+before and after capture. Release helper/test edits are outside that runtime
+source check. The capture v2 record carries the commit and its Git tree.
+
+`buildContractManifest(capture, expectedSource)` requires those identities to
+match the caller's expected commit/tree, rejects legacy or unbound captures,
+and adds the documented T2 MCP/Pi dispositions without asserting equivalence.
+It writes `contract-manifest.json` (canonical bytes) and `contract-identity.json`
+(source identity and SHA-256 of those exact bytes), beside `schema-capture.json`.
+The recorded behavioral dispositions include the accepted search variant:
+with `project` plus `all_projects`, HTTP rejects with 400, Pi omits `project`
+and succeeds globally, and MCP resolves globally (default and compact modes).
+For missing observation IDs, MCP update errors retain
+`Failed to update memory: sql: no rows in result set`; HTTP/Pi errors are
+compared separately, not asserted text-identical. Project-list comparisons use
+complete records and counts independently of order; this does not establish
+a stable ordering contract or raw transport-order parity.
+
+Git identity is separate from contract bytes: the same contract can occur in
+multiple commits. Identity comparisons are not signatures, external approval,
+proof against transient source changes, or publisher readiness.
+
+Pure integration checks are explicit:
+
+```sh
+node --test test/release-contract-manifest.test.mjs test/release-schema-capture.test.mjs test/release-version-contract.test.mjs
+```
+
+Current pure tests use synthetic bound records, not runtime provenance evidence.
+Real producer binding and rejection controls require their own isolated run.
+Destination freshness, publication authorization and remaining release gates
+are not supplied by the manifest or its recorded dispositions.
 
 ## Related policies
 

@@ -9,12 +9,24 @@ import { setTimeout as delay } from "node:timers/promises";
 import { test } from "node:test";
 import { capturePiSchema } from "../release/schema-capture.mjs";
 import { PROFILE_AGENT, PI_EXTRAS } from "../release/canonical-contract.mjs";
+import { buildContractManifest } from "../release/contract-manifest.mjs";
 
+const expectedCommit = process.env.ENGRAM_RELEASE_SOURCE_COMMIT;
+assert.match(expectedCommit ?? "", /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/, "ENGRAM_RELEASE_SOURCE_COMMIT must be a full Git commit ID");
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const sdkRoot = process.env.ENGRAM_PI_SDK_ROOT;
 assert.ok(sdkRoot, "ENGRAM_PI_SDK_ROOT is required; no downloads or skips");
 const require = createRequire(join(sdkRoot, "package.json"));
 const common = execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: root, encoding: "utf8" }).trim();
+const runtimePaths = ["internal/", "go.mod", "go.sum", "plugin/pi/index.ts", "plugin/pi/compaction-recovery.js", "plugin/pi/memory-tool-chrome.js", "plugin/pi/private-redaction.js"];
+function sourceIdentity() {
+  const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
+  assert.equal(git("rev-parse", "HEAD"), expectedCommit, "capture HEAD differs from selected source");
+  assert.equal(git("status", "--porcelain", "--untracked-files=all", "--", ...runtimePaths), "", "runtime source must be clean, including untracked Go files");
+  execFileSync("git", ["diff", "--quiet", expectedCommit, "--", ...runtimePaths], { cwd: root });
+  return { commit: expectedCommit, tree: git("rev-parse", `${expectedCommit}^{tree}`) };
+}
+const source = sourceIdentity();
 const owned = join(common, "gentle-checks/t3-capture");
 await mkdir(owned, { recursive: true });
 const dir = await mkdtemp(join(owned, "capture-"));
@@ -84,8 +96,12 @@ test("real TypeBox registration and MCP tools/list capture preserves schema meta
     const mcp = envelope.result.tools;
     assert.deepEqual(mcp.map(tool => tool.name).sort(), [...PROFILE_AGENT].sort());
     assert.deepEqual(await snapshot(), before, "listing changes no public stored fields/counters");
-    // Raw capture only: dispositions and candidate binding are separate gates.
-    await writeFile(join(dir, "schema-capture.json"), JSON.stringify({ schema: "engram.schema-capture/v1", dependencies: dependencyRoots, mcp, pi: [...tools.values()] }, null, 2) + "\n");
+    assert.deepEqual(sourceIdentity(), source, "runtime source identity changed during capture");
+    const capture = { schema: "engram.schema-capture/v2", source, dependencies: dependencyRoots, mcp, pi: [...tools.values()] };
+    const manifest = buildContractManifest(capture, source);
+    await writeFile(join(dir, "schema-capture.json"), JSON.stringify(capture, null, 2) + "\n");
+    await writeFile(join(dir, "contract-manifest.json"), manifest.bytes);
+    await writeFile(join(dir, "contract-identity.json"), JSON.stringify({ source, contractDigest: manifest.contractDigest }) + "\n");
     console.log(`capture retained: ${dir}`);
   } finally {
     if (url) await fetch(`${url}/stop`, { method: "POST" }); else child.kill("SIGTERM");
