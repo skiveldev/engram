@@ -74,6 +74,32 @@ registration retries, and recovery are host-specific behavior tested separately;
 MCP is not claimed to reproduce Pi's host lifecycle. Full 19-tool semantic parity
 remains a separate release gate.
 
+### Public judgment contract evidence
+
+From `plugin/pi`, run `node --test test/release-judge-contract.test.mjs`.
+The real HTTP/MCP/Pi fixture publicly seeds two same-project observations per
+transport and creates each relation through `mem_compare`. It asserts that seed
+write separately, then uses its returned `sync_id` as `judgment_id`. This proves
+already-judged overwrite, not a pending-to-judged transition.
+
+Valid overwrites, `not_conflict`, and omitted optional fields check complete
+returned/exported relation fields, stable portable identity, model clearing,
+reason/evidence/confidence, creation-time preservation and valid nondecreasing
+update timestamps. All transports mark actor/kind as `agent`. Explicit session
+provenance is shared; when omitted, Pi forwards its host session while HTTP/MCP
+omit session provenance. These are observed variants, not lifecycle equivalence.
+
+Complete global exports/statistics guard every unrelated stored field and counter;
+relation comparisons sort copies of complete records by `sync_id`, without
+assuming export order. Seed membership and export timestamps are checked.
+Public conflicts exclude `not_conflict` while export retains it. Unknown judgment
+IDs, invalid verbs and each missing required input preserve complete global state
+and public conflict lists/statistics, with exact transport-specific text, JSON,
+HTTP statuses and tool-error markers.
+
+No whitespace-input, SDK validation, pending-candidate, sync-enrollment/queue,
+physical database-byte or full T2 release-acceptance claim is made.
+
 ### Public comparison contract evidence
 
 From `plugin/pi`, run `node --test test/release-compare-contract.test.mjs`.
