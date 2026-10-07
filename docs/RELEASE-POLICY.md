@@ -54,6 +54,31 @@ preflight/test/publish order unchanged. No version or pin is selected or bumped;
 publication orchestration, destination lookup, resumability, ProfileAgent parity,
 and managed-pin migration are outside this boundary.
 
+### Real-dependency schema capture (explicit offline fixture)
+
+`schema-capture.mjs` projects Pi input schemas into JSON plus `schemaMetadata`.
+Only recognized TypeBox `~kind` and `~optional` fields are moved into that
+record, retaining path segments, value and enumerable/configurable/writable
+flags. Records sort by path depth, JSON-encoded path and key. Other hidden
+fields, symbols, accessors, cycles and unsupported values reject as
+`unsupported Pi schema`; JSON constraints and array order are preserved.
+
+From `plugin/pi`, with offline Go dependencies and an installed Pi SDK:
+
+```sh
+node --test test/release-schema-capture.test.mjs
+ENGRAM_PI_SDK_ROOT=/absolute/path/to/installed/pi-coding-agent node --test test/release-schema-capture.mjs
+```
+
+The explicit fixture loads actual plugin registrations with installed TypeBox
+and TUI dependencies, not stubs. It captures 22 Pi schemas and the 19 actual MCP
+`tools/list` records through the opt-in Go bridge. State, caches, logs and raw
+`schema-capture.json` remain under Git's common directory at
+`gentle-checks/t3-capture`; Go runs offline. This is registration-time schema
+evidence, not Pi SDK session dispatch or host validation. Callback code is not
+serialized. Full accepted dispositions, candidate/source binding and canonical
+manifest integration are still required before this capture is release evidence.
+
 ## Related policies
 
 - [Security policy](../SECURITY.md) for vulnerability reporting and supported-version security fixes.
