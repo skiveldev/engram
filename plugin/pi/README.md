@@ -74,6 +74,27 @@ registration retries, and recovery are host-specific behavior tested separately;
 MCP is not claimed to reproduce Pi's host lifecycle. Full 19-tool semantic parity
 remains a separate release gate.
 
+### Public comparison contract evidence
+
+From `plugin/pi`, run `node --test test/release-compare-contract.test.mjs`.
+`mem_compare` persists an already-judged verdict; it does not call a model.
+The real HTTP/MCP/Pi fixture inserts `supersedes`, overwrites the same pair with
+`not_conflict`, then overwrites its reverse direction with `related`. It checks
+stable relation identity, complete judgment/provenance fields, model omission,
+creation-time preservation and valid nondecreasing update timestamps.
+
+Global exports include exact seeded records and all relation fields: only the
+expected relation changes, while observations, sessions, prompts, unrelated
+relations and global counters remain intact. Public conflicts lists/statistics
+exclude `not_conflict`, even though export retains it. Missing/out-of-range
+confidence, invalid relation and cross-project rejection preserve complete global
+state and public relation lists/statistics, with exact transport-specific errors.
+Export-generation timestamps are validated separately.
+
+Fractional IDs, whitespace-only inputs, nonexistent observations, sync enrollment
+and internal queue effects are not covered by this fixture. No total invalid-input
+parity, retry no-op, SDK/lifecycle or physical database-byte identity is claimed.
+
 ### Public topic-key suggestion evidence
 
 From `plugin/pi`, run `node --test test/release-topic-key-contract.test.mjs`.
