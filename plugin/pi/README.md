@@ -74,6 +74,32 @@ registration retries, and recovery are host-specific behavior tested separately;
 MCP is not claimed to reproduce Pi's host lifecycle. Full 19-tool semantic parity
 remains a separate release gate.
 
+### Public review contract evidence
+
+From `plugin/pi`, run `node --test test/release-review-contract.test.mjs`.
+The real HTTP/MCP/Pi fixture confirms the bridge's process project publicly,
+then seeds fresh decisions in that project and an unrelated project. Explicit
+same-project lists are empty before and after marking: HTTP/Pi return
+`{count: 0, observations: []}`, while MCP returns a project/result envelope
+with `No memories need review.` and an empty observations array.
+
+Successful marking checks returned IDs, portable identity, active state and
+valid future review dates. HTTP/Pi include title/type/project; MCP includes
+project-resolution metadata and its marked-reviewed message. Complete global
+exports and statistics permit only the target's `review_after` and `updated_at`
+to change, preserving creation time and all unrelated records/counters. Update
+timestamps are valid and nondecreasing; neither review-date advancement nor
+cross-transport date equality is claimed because of clock precision. Missing-ID
+rejection preserves complete global state, with exact HTTP 404/Pi errors and
+MCP's `Failed to mark reviewed` error. Export timestamps are checked separately;
+global statistics do not count reviews.
+
+Due-record removal is not covered. Omitted-project list selection (MCP/Pi global
+versus HTTP current-project) and explicit-project marking selection (MCP uses its
+resolved process/default project, HTTP/Pi are scoped) remain excluded variants,
+not tested selector parity. No SDK/lifecycle, sync-queue, physical-byte or full
+T2 release-acceptance claim is made.
+
 ### Public judgment contract evidence
 
 From `plugin/pi`, run `node --test test/release-judge-contract.test.mjs`.
