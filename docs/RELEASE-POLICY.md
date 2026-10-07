@@ -110,6 +110,46 @@ Real producer binding and rejection controls require their own isolated run.
 Destination freshness, publication authorization and remaining release gates
 are not supplied by the manifest or its recorded dispositions.
 
+### Offline artifact and destination evidence
+
+`release/artifact-evidence.mjs` supplies two pure helpers; neither publishes.
+`buildArtifactIdentity({ source: { commit, tree }, contractBytes, contractDigest,
+npmBytes, coreAssets })` requires full selected Git identities, exact canonical
+contract bytes with their matching SHA-256, and Buffer/Uint8Array artifact bytes.
+Core assets are `{ name, bytes, digest? }`; an optional digest must match bytes.
+Empty/blank or duplicate names, invalid bytes/digests and an empty core set reject
+with `TypeError: invalid artifact evidence`. No archive format is imposed.
+
+The returned identity includes `sourceCommit`, `sourceTree`, `contractDigest`,
+`npmDigest`, `coreDigest`, sorted `coreAssets` (each name and SHA-256), and
+`coreManifestBytes`. Core digest hashes UTF-8 JSON with one LF:
+`{"schema":"engram.core-assets/v1","assets":[{"name":"...","digest":"..."}]}`.
+Names sort by JavaScript string comparison, independent of input order. npm digest
+hashes exact tarball bytes; contract digest remains separate. Inputs are unchanged.
+These integrity comparisons do not prove source-to-build correspondence,
+provenance, signatures, approval or publication permission.
+
+`bindDestinationObservation({ attemptId, destination, candidate, observation })`
+requires a nonblank current attempt ID, destination `npm` or `core`, the candidate
+identity plus `version`, and an observation with matching `attemptId`/`version`.
+State must explicitly be `absent` or `present`; present observations require
+`sourceCommit`, `contractDigest` and `contentDigest` (npm or core as appropriate).
+Malformed, unknown, missing or previous-attempt evidence rejects with
+`TypeError: invalid destination observation`. Valid immutable identity differences
+are preserved for the planner to block; the operator chooses any corrective
+version, never this helper. Returned fields are compatible with the existing
+planner's absent/present snapshots; the planner itself is not integrated here.
+
+Adapters must query destinations anew for each publication/recovery attempt.
+A matching attempt ID does **not** prove a new query happened. Offline fixtures
+prove validation only, not live freshness; no timestamp or TTL is inferred.
+Concurrency, staging/core/promotion execution and remaining release gates are
+outside this unit. From `plugin/pi`, run the pure checks with:
+
+```sh
+node --test test/release-artifact-evidence.test.mjs
+```
+
 ## Related policies
 
 - [Security policy](../SECURITY.md) for vulnerability reporting and supported-version security fixes.
