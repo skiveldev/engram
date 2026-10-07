@@ -74,6 +74,26 @@ registration retries, and recovery are host-specific behavior tested separately;
 MCP is not claimed to reproduce Pi's host lifecycle. Full 19-tool semantic parity
 remains a separate release gate.
 
+### Public pin/unpin contract evidence
+
+From `plugin/pi`, run `node --test test/release-pin-contract.test.mjs`.
+The isolated public HTTP/MCP/Pi fixture pins, repeats pin, unpins and repeats
+unpin. Global snapshots explicitly use `/export?all_projects=true`: only the
+target observation's exported `pinned` changes, while all other exported fields
+and global statistics remain identical. Export timestamps are validated separately.
+Context places the target in Pinned or Recent Observations, and compact search
+preserves its complete record except for `pinned`. Rejected calls preserve state.
+
+HTTP and direct registered Pi execution reject fractional/nonpositive IDs;
+MCP truncates fractional numeric IDs and rejects zero as missing. Missing positive
+IDs retain transport-specific errors. This is not SDK argument-validation proof.
+Deleted-ID behavior, injected post-mutation reload failures, internal sync rows
+and physical database/WAL byte identity are outside this fixture.
+
+An unqualified `/export` may be project-scoped. Earlier contract fixtures using
+that endpoint compare all fields of the returned export, not necessarily every
+project's stored records; their global statistics checks remain separate.
+
 ### Public doctor contract evidence
 
 From `plugin/pi`, run `node --test test/release-doctor-contract.test.mjs`.
