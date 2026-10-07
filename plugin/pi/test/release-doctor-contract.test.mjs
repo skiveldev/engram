@@ -41,7 +41,9 @@ test("doctor public reports and rejected checks preserve stored records and coun
       return JSON.parse(text);
     };
     const snapshot = async () => {
-      const exported = await http("/export");
+      const exported = await http("/export?all_projects=true");
+      assert.ok(Array.isArray(exported.sessions));
+      assert.ok(exported.sessions.some((entry) => entry.id === "doctor-parity" && entry.project === "parity"));
       assert.equal(typeof exported.exported_at, "string");
       assert.ok(Number.isFinite(Date.parse(exported.exported_at)));
       const { exported_at, ...stored } = exported;

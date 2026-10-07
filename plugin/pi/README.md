@@ -90,9 +90,15 @@ IDs retain transport-specific errors. This is not SDK argument-validation proof.
 Deleted-ID behavior, injected post-mutation reload failures, internal sync rows
 and physical database/WAL byte identity are outside this fixture.
 
-An unqualified `/export` may be project-scoped. Earlier contract fixtures using
-that endpoint compare all fields of the returned export, not necessarily every
-project's stored records; their global statistics checks remain separate.
+An unqualified `/export` may be project-scoped; historical runs using that
+endpoint guarded only the returned records, not all projects' stored data.
+Current-project, observation, search/project-list, doctor and SDK snapshot helpers
+now use `/export?all_projects=true` and assert their exact seeded records are
+present before comparing full exports and global statistics. Observation checks
+include both seeded sessions and the current revision; search checks include both
+projects' observations. Single-project fixtures do not claim multi-project seeds.
+The protocol context loop still checks counters only; full snapshots guard its
+current-project calls. Nested SDK snapshots do not cover whole-host lifecycle.
 
 ### Public doctor contract evidence
 
@@ -240,10 +246,12 @@ host lifecycle and the remaining full T2 semantic/release gates are not proved.
 
 The host integration is intentionally outside the default npm test glob. With an
 installed SDK and offline Go dependencies, run from `plugin/pi` with isolated
-`TMPDIR`, `GOTMPDIR`, and `GOCACHE` under Git's common directory:
+`TMPDIR`, `GOTMPDIR`, and `GOCACHE` under Git's common directory. Set `GOMODCACHE` explicitly to the
+existing dependency cache because the harness replaces HOME; keep `GOPROXY=off`,
+`GOSUMDB=off`, `GOTOOLCHAIN=local` and `GOFLAGS=-mod=readonly`:
 
 ```sh
-test -f test/pi-host-validation.mjs && ENGRAM_PI_SDK_ROOT=/absolute/path/to/installed/pi-coding-agent node --test test/pi-host-validation.mjs
+test -f test/pi-host-validation.mjs && GOMODCACHE=/absolute/path/to/existing/go/pkg/mod ENGRAM_PI_SDK_ROOT=/absolute/path/to/installed/pi-coding-agent node --test test/pi-host-validation.mjs
 ```
 
 Missing SDK dependencies fail rather than skip or install. The harness discards

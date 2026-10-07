@@ -39,8 +39,16 @@ test("public search and all-known projects preserve state and explicit transport
       assert.equal(response.status, status, text);
       return JSON.parse(text);
     };
+    const expectedSeeds = [];
     const snapshot = async () => {
-      const exported = await http("/export");
+      const exported = await http("/export?all_projects=true");
+      for (const { project, id } of expectedSeeds) {
+        assert.ok(Array.isArray(exported.sessions));
+        assert.ok(Array.isArray(exported.observations));
+        assert.ok(exported.sessions.some((entry) => entry.id === `search-${project}` && entry.project === project));
+        assert.ok(exported.observations.some((entry) => entry.id === id && entry.project === project
+          && entry.session_id === `search-${project}` && entry.title === `${marker} ${project}` && entry.content === content));
+      }
       assert.equal(typeof exported.exported_at, "string");
       assert.ok(Number.isFinite(Date.parse(exported.exported_at)));
       const { exported_at, ...stored } = exported;
@@ -96,6 +104,7 @@ test("public search and all-known projects preserve state and explicit transport
       assert.equal(saved.status, "saved");
       assert.ok(Number.isSafeInteger(saved.id) && saved.id > 0);
       ids.set(project, saved.id);
+      expectedSeeds.push({ project, id: saved.id });
     }
     assert.notEqual(ids.get("parity"), ids.get("other"));
     const listed = await projects(2);

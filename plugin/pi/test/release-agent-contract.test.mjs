@@ -102,7 +102,10 @@ test("paired public context and current-project dispositions preserve public sta
     assert.equal(seeded.status, 201, await seeded.text());
     const marker = "paired-context-observation-marker";
     const observation = await fetch(`${url}/observations`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: "parity-seed", project: "parity", type: "note", title: marker, content: marker }) });
-    assert.equal(observation.status, 201, await observation.text());
+    const observationBody = await observation.text();
+    assert.equal(observation.status, 201, observationBody);
+    const observationID = JSON.parse(observationBody).id;
+    assert.ok(Number.isSafeInteger(observationID) && observationID > 0);
     const stats = async () => (await fetch(`${url}/stats?all_projects=true`)).json();
     const before = await stats();
     const baseline = await rpc("mem_context", { project: "parity" });
@@ -142,7 +145,12 @@ test("paired public context and current-project dispositions preserve public sta
       return response.json();
     };
     const snapshot = async () => {
-      const exported = await publicJSON("/export");
+      const exported = await publicJSON("/export?all_projects=true");
+      assert.ok(Array.isArray(exported.sessions));
+      assert.ok(Array.isArray(exported.observations));
+      assert.ok(exported.sessions.some((entry) => entry.id === "parity-seed" && entry.project === "parity"));
+      assert.ok(exported.observations.some((entry) => entry.id === observationID && entry.project === "parity"
+        && entry.session_id === "parity-seed" && entry.title === marker && entry.content === marker));
       assert.equal(typeof exported.exported_at, "string");
       assert.ok(Number.isFinite(Date.parse(exported.exported_at)));
       const { exported_at, ...stored } = exported;

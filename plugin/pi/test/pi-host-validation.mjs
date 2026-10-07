@@ -51,7 +51,9 @@ test("real Pi host converts fractional max_bytes and rejects nonpositive values 
       return response.json();
     };
     const snapshot = async () => {
-      const exported = await get("/export");
+      const exported = await get("/export?all_projects=true");
+      assert.ok(Array.isArray(exported.sessions));
+      assert.ok(exported.sessions.some((entry) => entry.id === "parity-sdk-seed" && entry.project === "parity"));
       const { exported_at, ...data } = exported;
       assert.equal(typeof exported_at, "string", "export includes generation metadata");
       assert.ok(Number.isFinite(Date.parse(exported_at)), "export generation timestamp is valid");

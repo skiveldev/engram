@@ -40,7 +40,15 @@ test("paired observation defaults, chronological pagination and MCP-only respons
       return JSON.parse(text);
     };
     const snapshot = async () => {
-      const exported = await http("/export");
+      const exported = await http("/export?all_projects=true");
+      assert.ok(Array.isArray(exported.sessions));
+      assert.ok(Array.isArray(exported.observations));
+      for (const project of ["parity", "other-context"]) {
+        assert.ok(exported.sessions.some((entry) => entry.id === `seed-${project}` && entry.project === project));
+      }
+      assert.ok(exported.observations.some((entry) => entry.id === id && entry.project === "parity"
+        && entry.session_id === "seed-parity" && entry.title === title && entry.content === content(52)
+        && entry.revision_count === 53));
       assert.equal(typeof exported.exported_at, "string");
       assert.ok(Number.isFinite(Date.parse(exported.exported_at)), "valid export generation timestamp");
       const { exported_at, ...stored } = exported;
