@@ -74,6 +74,34 @@ registration retries, and recovery are host-specific behavior tested separately;
 MCP is not claimed to reproduce Pi's host lifecycle. Full 19-tool semantic parity
 remains a separate release gate.
 
+### Public primary-content save contract evidence
+
+From the repository root, run
+`node --test plugin/pi/test/release-save-contract.test.mjs`.
+The focused real HTTP/MCP/registered-Pi fixture passed: distinct short primary
+content saves check complete exported observation rows, numeric/portable identities,
+valid generated timestamps, manual type, project scope, revision/duplicate counts
+of one and unpinned state. HTTP explicitly supplies `manual`; MCP/Pi default it.
+No topic key is stored; MCP's exact suggested-key message is checked separately.
+
+Public shared-session seeds are checked as separate writes. Before Pi initialization,
+owned `.engram/config.json` fixes project `other`; public current-project preparation
+must return the complete config response without changing global state. The write
+target is fixed at `parity`: HTTP/MCP use shared `save-parity`, while Pi creates
+`save-parity@parity`, a project-owned satellite with empty directory. Complete
+global exports and all statistics permit only the observation addition/count and,
+for Pi, the satellite addition/count. The first observation populates the project
+inventory with `parity`; session seeds alone do not. Export timestamps are validated
+separately, and comparisons sort copies of complete stored records.
+
+HTTP/Pi return `id`/`status`; MCP returns session-project context, exact save/suggestion
+text, identity/state, truncation metadata and `judgment_required: false`.
+Empty content and blank titles are rejected after each established session with
+exact transport-specific errors, preserving every exported field and statistic.
+MCP explicitly disables prompt capture. Existing alias stub tests remain separate.
+No dedup/upsert, long-content, conflict candidates, SDK validation, private-owner,
+recovery, lifecycle equivalence or full T2 release acceptance is claimed.
+
 ### Public prompt-save contract evidence
 
 From `plugin/pi`, run `node --test test/release-save-prompt-contract.test.mjs`.

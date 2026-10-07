@@ -1,0 +1,165 @@
+import assert from "node:assert/strict";
+import { execFileSync, spawn } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { test } from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
+import { createPluginSandbox, importPluginFromSandbox } from "./plugin-sandbox.mjs";
+
+const root = fileURLToPath(new URL("../../../", import.meta.url));
+const common = execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: root, encoding: "utf8" }).trim();
+const scratch = join(common, "gentle-checks/t2-parity/save-contract-owned");
+mkdirSync(scratch, { recursive: true });
+
+test("primary-content saves have complete public rows, envelopes and global effects", async () => {
+  const dir = mkdtempSync(join(scratch, "bridge-"));
+  mkdirSync(join(dir, ".engram"));
+  writeFileSync(join(dir, ".engram/config.json"), '{"project_name":"other"}');
+  const child = spawn("go", ["test", "./internal/mcp", "-run", "^TestPiAgentContractBridge$", "-count=1"], {
+    cwd: root, env: { ...process.env, ENGRAM_PARITY_BRIDGE: dir }, stdio: ["ignore", "pipe", "pipe"],
+  });
+  let output = "";
+  child.stdout.on("data", (chunk) => { output += chunk; });
+  child.stderr.on("data", (chunk) => { output += chunk; });
+  const exited = new Promise((resolve, reject) => { child.once("error", reject); child.once("exit", resolve); });
+  const previous = process.env.ENGRAM_URL;
+  let url;
+  const timestamp = (value) => { assert.equal(typeof value, "string"); assert.ok(Number.isFinite(Date.parse(value)), value); };
+  const ordered = (state) => ({ ...state, stored: { ...state.stored,
+    sessions: [...(state.stored.sessions ?? [])].sort((a, b) => a.id.localeCompare(b.id)),
+    observations: [...state.stored.observations].sort((a, b) => a.id - b.id),
+    prompts: [...(state.stored.prompts ?? [])].sort((a, b) => a.id - b.id),
+    ...(state.stored.relations ? { relations: [...state.stored.relations].sort((a, b) => a.sync_id.localeCompare(b.sync_id)) } : {}),
+  } });
+  try {
+    for (let n = 0; n < 600 && !existsSync(join(dir, "url")); n++) {
+      assert.equal(child.exitCode, null, output);
+      await delay(100);
+    }
+    assert.ok(existsSync(join(dir, "url")), `bridge unavailable: ${output}`);
+    url = readFileSync(join(dir, "url"), "utf8");
+    process.env.ENGRAM_URL = url;
+    const http = async (path, method = "GET", body, status = 200) => {
+      const response = await fetch(`${url}${path}`, { method, headers: { "Content-Type": "application/json" },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+      const text = await response.text();
+      assert.equal(response.status, status, text);
+      assert.equal(response.headers.get("content-type"), "application/json");
+      const data = JSON.parse(text);
+      assert.equal(text, `${JSON.stringify(data)}\n`);
+      return data;
+    };
+    const snapshot = async () => {
+      const exported = await http("/export?all_projects=true");
+      timestamp(exported.exported_at);
+      const { exported_at, ...stored } = exported;
+      return { stored, stats: await http("/stats?all_projects=true") };
+    };
+    for (const project of ["parity", "other"]) {
+      const before = await snapshot();
+      const id = `save-${project}`;
+      assert.deepEqual(await http("/sessions", "POST", { id, project, directory: dir }, 201), { id, status: "created" });
+      const after = await snapshot();
+      const actual = after.stored.sessions.find((entry) => entry.id === id);
+      timestamp(actual.started_at);
+      const row = { id, project, ownership_mode: "shared", directory: dir, started_at: actual.started_at };
+      assert.deepEqual(actual, row);
+      const expected = structuredClone(before);
+      expected.stored.sessions = [...(before.stored.sessions ?? []), row];
+      expected.stats.total_sessions++;
+      assert.deepEqual(ordered(after), ordered(expected), "separate public session seed effect");
+    }
+    const tools = new Map();
+    const sandbox = await createPluginSandbox(mkdtempSync(join(scratch, "pi-")));
+    (await importPluginFromSandbox(sandbox))({ registerTool: (tool) => tools.set(tool.name, tool), on() {}, appendEntry() {} });
+    const ctx = { cwd: dir, sessionManager: { getSessionId: () => "save-parity" }, ui: { setStatus() {} } };
+    const beforePreparation = await snapshot();
+    const preparation = await tools.get("mem_current_project").execute("prepare", { cwd: ctx.cwd }, undefined, undefined, ctx);
+    assert.equal(preparation.isError, undefined, JSON.stringify(preparation));
+    const resolved = { project: "other", project_source: "config", project_path: dir, cwd: dir, available_projects: null };
+    assert.deepEqual(preparation.details, { data: resolved });
+    assert.deepEqual(preparation.content, [{ type: "text", text: JSON.stringify(preparation.details.data, null, 2) }]);
+    assert.deepEqual(ordered(await snapshot()), ordered(beforePreparation), "public config preparation is immutable");
+    const target = "parity";
+    assert.notEqual(target, resolved.project);
+    const satelliteID = `${ctx.sessionManager.getSessionId()}@${target}`;
+    const call = async (transport, title, content, rejected = false) => {
+      const args = { title, content, project: target, session_id: "save-parity" };
+      if (transport === "HTTP") return http("/observations", "POST", { ...args, type: "manual" }, rejected ? 400 : 201);
+      if (transport === "Pi") return tools.get("mem_save").execute("paired", { title, content, project: target }, undefined, undefined, ctx);
+      const envelope = await http("/mcp", "POST", { jsonrpc: "2.0", id: 1, method: "tools/call",
+        params: { name: "mem_save", arguments: { title, content, session_id: "save-parity", capture_prompt: false } } });
+      assert.equal(envelope.error, undefined, JSON.stringify(envelope));
+      return envelope.result;
+    };
+    // Disjoint ASCII fixtures: no family keywords, candidate overlap, private tags or truncation.
+    const fixtures = [
+      ["HTTP", "Amber", "Quartz"], ["MCP", "Birch", "Zephyr"], ["Pi", "Cobalt", "Violet"],
+    ];
+    for (const [transport, title, content] of fixtures) {
+      const before = await snapshot();
+      const result = await call(transport, title, content);
+      const after = await snapshot();
+      const additions = after.stored.observations.filter((entry) => !before.stored.observations.some((old) => old.id === entry.id));
+      assert.equal(additions.length, 1);
+      const actual = additions[0];
+      assert.ok(Number.isSafeInteger(actual.id) && actual.id > 0);
+      assert.equal(typeof actual.sync_id, "string");
+      assert.ok(actual.sync_id.startsWith("obs-") && !before.stored.observations.some((entry) => entry.sync_id === actual.sync_id));
+      for (const key of ["created_at", "updated_at", "last_seen_at"]) timestamp(actual[key]);
+      assert.ok(Date.parse(actual.updated_at) >= Date.parse(actual.created_at));
+      assert.ok(Date.parse(actual.last_seen_at) >= Date.parse(actual.created_at));
+      const row = { id: actual.id, sync_id: actual.sync_id, session_id: transport === "Pi" ? satelliteID : "save-parity",
+        type: "manual", title, content, project: target, scope: "project", revision_count: 1, duplicate_count: 1,
+        last_seen_at: actual.last_seen_at, created_at: actual.created_at, updated_at: actual.updated_at, pinned: false };
+      assert.deepEqual(actual, row, "complete input-derived exported observation, including metadata defaults");
+      const data = transport === "HTTP" ? result : transport === "Pi" ? result.details.data : JSON.parse(result.content[0].text);
+      if (transport === "MCP") {
+        // store.SuggestTopicKey: manual/no keywords => topic; ASCII title => lowercase segment.
+        assert.ok(Number.isSafeInteger(data.truncation.limit_bytes) && data.truncation.limit_bytes >= Buffer.byteLength(content));
+        assert.deepEqual(data, { project: target, project_source: "session", project_path: dir,
+          result: `Memory saved: "${title}" (manual)\nSuggested topic_key: topic/${title.toLowerCase()}`,
+          id: row.id, sync_id: row.sync_id, state: "active", judgment_required: false,
+          truncation: { original_bytes: Buffer.byteLength(content), limit_bytes: data.truncation.limit_bytes, truncated: false } });
+      } else assert.deepEqual(data, { id: row.id, status: "saved" });
+      if (transport !== "HTTP") {
+        assert.equal(result.isError, undefined);
+        assert.deepEqual(result.content, [{ type: "text", text: JSON.stringify(data, null, transport === "Pi" ? 2 : undefined) }]);
+        if (transport === "Pi") assert.deepEqual(result.details, { data });
+      }
+      const expected = structuredClone(before);
+      expected.stored.observations.push(row);
+      expected.stats.total_observations++;
+      expected.stats.projects = [target];
+      if (transport === "Pi") {
+        assert.ok(!before.stored.sessions.some((entry) => entry.id === satelliteID));
+        const satellite = after.stored.sessions.find((entry) => entry.id === satelliteID);
+        timestamp(satellite.started_at);
+        const sessionRow = { id: satelliteID, project: target, ownership_mode: "project_owned", directory: "", started_at: satellite.started_at };
+        assert.deepEqual(satellite, sessionRow);
+        expected.stored.sessions.push(sessionRow);
+        expected.stats.total_sessions++;
+      }
+      assert.deepEqual(ordered(after), ordered(expected), "only complete save row/count and separately specified Pi satellite/count change");
+      for (const [badTitle, badContent, kind] of [[title, "", "content"], ["   ", content, "title"]]) {
+        const beforeReject = await snapshot();
+        const rejected = await call(transport, badTitle, badContent, true);
+        const error = kind === "content"
+          ? transport === "HTTP" ? "session_id and content are required" : "content is required for mem_save (use content, or observation for backward-compatible clients)"
+          : transport === "MCP" ? "Failed to save: observation title is required" : "observation title is required";
+        if (transport === "HTTP") assert.deepEqual(rejected, { error });
+        else {
+          assert.equal(rejected.isError, true);
+          assert.deepEqual(rejected.content, [{ type: "text", text: error }]);
+          if (transport === "Pi") assert.deepEqual(rejected.details, kind === "content" ? { error } : { error, http_status: 400, data: { error } });
+        }
+        assert.deepEqual(ordered(await snapshot()), ordered(beforeReject), "rejected save preserves full global export and all counters after established session");
+      }
+    }
+  } finally {
+    if (previous === undefined) delete process.env.ENGRAM_URL; else process.env.ENGRAM_URL = previous;
+    if (url) await fetch(`${url}/stop`, { method: "POST" });
+    assert.equal(await exited, 0, output);
+  }
+});
