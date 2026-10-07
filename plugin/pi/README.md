@@ -74,6 +74,26 @@ registration retries, and recovery are host-specific behavior tested separately;
 MCP is not claimed to reproduce Pi's host lifecycle. Full 19-tool semantic parity
 remains a separate release gate.
 
+### Public topic-key suggestion evidence
+
+From `plugin/pi`, run `node --test test/release-topic-key-contract.test.mjs`.
+The real MCP/HTTP core and registered Pi calls preserve all globally exported
+stored fields and statistics around every suggestion or rejection; seeded session
+and observation membership prevents vacuous snapshots. Export timestamps are
+validated separately. This fixture covers existing title/content examples,
+punctuation-only input, and omitted/empty/whitespace-only input.
+
+Pi intentionally retains its local slug variant instead of forwarding to core:
+`Architecture` + `Auth Model` gives core `architecture/auth-model` but Pi
+`auth-model`. The content fallback `Fix nil panic in auth middleware on empty
+token` gives core `bug/fix-nil-panic-in-auth-middleware-on-empty` and Pi
+`fix-nil-panic-in-auth-middleware-on-empty-token`. Punctuation-only input gives
+core `topic/general` and Pi `memory`. Missing/blank title and content cause HTTP
+400 and MCP tool errors, but Pi returns `memory`. MCP renders successful core
+suggestions as text; HTTP and Pi expose their respective `topic_key` JSON.
+These are accepted, tested output differences, not suggestion equivalence or
+SDK/lifecycle proof. No production behavior changes are part of this fixture.
+
 ### Public update contract evidence
 
 From `plugin/pi`, run `node --test test/release-update-contract.test.mjs`.
