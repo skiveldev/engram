@@ -553,6 +553,21 @@ Engram does not try to make the model read everything. It gives the model a disc
 
 Engram includes a terminal UI for browsing sessions, observations, prompts, projects, timelines, and search results. Engram Cloud adds browser visibility for shared project memory.
 
+## Public passive contract checks
+
+From `plugin/pi`, using the offline, isolated temporary and Go-cache settings documented above:
+
+```sh
+node --test test/release-passive-contract.test.mjs
+```
+
+The passive fixture checks the last learnings section, extraction thresholds,
+default sources (`mcp-passive` versus `pi-tool`), complete new rows, duplicate
+no-write effects, zero-extraction results and empty-content variants. Pi's first
+host registration is accounted for separately. Project-list ordering is not
+asserted; complete values and all counters are retained. These fixtures do not
+prove partial-store-failure recovery or SDK dispatch validation.
+
 ## Core resume compatibility
 
 `gentle-engram` 0.2.0 negotiates root session resume through `GET /health`:
