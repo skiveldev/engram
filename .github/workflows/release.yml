@@ -4,32 +4,67 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      release_ref:
+        description: "Full canonical refs/tags/vSEMVER (not a branch or Pi tag)"
+        required: true
+        type: string
 
 permissions:
-  contents: write
+  contents: read
+concurrency:
+  group: coordinated-release-${{ inputs.release_ref || github.ref }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_REF: ${{ inputs.release_ref || github.ref }}
+  ENGRAM_PI_SDK_VERSION: ${{ vars.ENGRAM_PI_SDK_VERSION }}
+  ENGRAM_TRUSTED_PUBLISHER_CONFIRMED: ${{ vars.ENGRAM_TRUSTED_PUBLISHER_CONFIRMED }}
 
 jobs:
-  goreleaser:
+  coordinated:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     steps:
+      - name: Validate canonical ref before checkout
+        run: |
+          node -e '
+          const ref = process.env.RELEASE_REF;
+          const semver = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+          const match = ref?.startsWith("refs/tags/v") && semver.exec(ref.slice(11));
+          if (!match || match[4]?.split(".").some(x => /^\d+$/.test(x) && x.length > 1 && x.startsWith("0"))) process.exit(1);
+          '
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          ref: ${{ env.RELEASE_REF }}
           fetch-depth: 0
-
+          persist-credentials: false
       - name: Set up Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: "1.25.10"
-
-      - name: Verify module metadata is tidy
-        run: go mod tidy -diff
-
-      - name: Run GoReleaser
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "24"
+      - name: Ensure npm supports OIDC trusted publishing
+        run: |
+          CURRENT=$(npm --version)
+          if [ "$(printf '%s\n11.5.1\n' "$CURRENT" | sort -V | head -1)" != "11.5.1" ]; then
+            npm install -g npm@11.5.1
+          fi
+      - name: Install GoReleaser OSS without building or publishing
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7
         with:
-          version: "~> v2"
-          args: release --clean
+          version: "v2.13.2"
+          args: --version
+      - name: Verify module metadata and execute coordinated train
+        # Driver gates go mod tidy -diff before downloads, preflight and the sole core build.
+        run: node .github/scripts/coordinated-release.mjs
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_PROMOTION_TOKEN: ${{ secrets.NPM_PROMOTION_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

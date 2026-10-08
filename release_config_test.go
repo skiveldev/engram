@@ -8,32 +8,6 @@ import (
 	"testing"
 )
 
-const expectedGoreleaserJob = `  goreleaser:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          fetch-depth: 0
-
-      - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
-        with:
-          go-version: "1.25.10"
-
-      - name: Verify module metadata is tidy
-        run: go mod tidy -diff
-
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7
-        with:
-          version: "~> v2"
-          args: release --clean
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-`
-
 func TestReleaseChecksModuleMetadataWithoutMutatingTaggedSources(t *testing.T) {
 	root := releaseConfigRepoRoot(t)
 	goreleaser := releaseConfigFile(t, filepath.Join(root, ".goreleaser.yaml"))
@@ -42,12 +16,16 @@ func TestReleaseChecksModuleMetadataWithoutMutatingTaggedSources(t *testing.T) {
 	}
 
 	workflow := releaseConfigFile(t, filepath.Join(root, ".github", "workflows", "release.yml"))
-	job, ok := releaseWorkflowGoreleaserJob(workflow)
-	if !ok {
-		t.Fatal("release workflow must contain exactly one top-level goreleaser job")
+	if strings.Count(workflow, "\n  coordinated:\n") != 1 ||
+		strings.Count(workflow, "run: node .github/scripts/coordinated-release.mjs") != 1 ||
+		!strings.Contains(workflow, `go-version: "1.25.10"`) || strings.Contains(workflow, "args: release") {
+		t.Fatal("release workflow must delegate its sole release to the coordinated driver after Go setup")
 	}
-	if job != expectedGoreleaserJob {
-		t.Errorf("unexpected goreleaser job; it must set up Go, run blocking `go mod tidy -diff`, then run GoReleaser without additional release steps\nwant:\n%s\ngot:\n%s", expectedGoreleaserJob, job)
+	driver := releaseConfigFile(t, filepath.Join(root, ".github", "scripts", "coordinated-release.mjs"))
+	tidy := strings.Index(driver, "await call('go', ['mod', 'tidy', '-diff'])")
+	build := strings.Index(driver, "await call('goreleaser'")
+	if tidy < 0 || build <= tidy {
+		t.Fatal("driver must gate the core build with nonmutating go mod tidy -diff")
 	}
 }
 
