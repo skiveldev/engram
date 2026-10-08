@@ -219,3 +219,32 @@ From `plugin/pi`, run the socket-free, in-memory adapter checks:
 ```sh
 node --test test/release-destination-probes.test.mjs
 ```
+
+### Read-only CLI census adapters
+
+`createDestinationCliQueries({ packageName, repository, run? })` in
+`release/destination-cli-queries.mjs` supplies the coordinator's npm/core queries.
+Import and construction execute nothing. Each valid query independently invokes
+`npm view <packageName> versions --json` or
+`gh api repos/<owner>/<repo>/releases --paginate --slurp`.
+The default promisified `execFile` uses argument arrays, no shell, a 30-second
+ timeout and 1 MiB output bound; it does not write environment or artifacts.
+The injectable runner must reject command failures and return `{ stdout, stderr }`
+on success. No stderr is parsed or exposed. No publication commands are issued.
+
+Only a successful well-formed complete census establishes absence: npm accepts
+one strict SemVer string or an array of strict SemVer strings; GitHub accepts an
+array of pages, each an array of release objects with string `tag_name`.
+Exact version / `v<version>` matches report presence without invented identity,
+so existing releases still block at the coordinator. Errors (including E404,
+authentication and network failures), bad JSON or census shapes report unknown.
+Each response echoes the current request bindings; no results are cached.
+This implements concrete command IO, superseding the earlier unimplemented-IO
+note, but offline fixtures do not prove live freshness, equivalence or readiness.
+Identity carriers and whole T3 acceptance remain unresolved; no live query was run.
+
+From `plugin/pi`, run the offline fake-runner checks:
+
+```sh
+node --test test/release-destination-cli-queries.test.mjs
+```
