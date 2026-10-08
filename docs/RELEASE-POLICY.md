@@ -289,3 +289,89 @@ frozen gh/Homebrew publication and identity transport remain the next unit;
 serialized workflow/lock/recovery wiring remains the following unit. Destination
 freshness, OIDC/provenance, pin migration and publication authorization remain
 separate gates. This command does not activate the coordinated release workflow.
+
+### Frozen coordinated publisher (offline-tested executable)
+
+The publisher adds executable delivery and identity transport to the earlier pure
+helpers; it does not activate a workflow or prove a real release is ready.
+Its exact help is:
+
+```text
+Usage: node plugin/pi/release/release-publisher.mjs --config <absolute JSON configuration path>
+```
+
+`runReleasePublisher(config, { root, run?, env? })` is the public function.
+The CLI reads the same JSON configuration. Required fields are `version`, `ref`
+(full `refs/tags/v<version>`), `attemptId` (unique alphanumeric/underscore/hyphen,
+1–96 characters), `source: { commit, tree }` (full Git IDs), `preflightDirectory`,
+`coreDirectory`, `coreAssets: [{ name, path }]`, `formulaPath`, `repository`
+(`owner/name`), `packageName`, and externally confirmed `trustedPublisher: true`.
+No secrets or extra keys belong in JSON. All filesystem inputs are absolute,
+canonical, nonsymlink paths. Preflight must be under Git-common `gentle-checks`;
+core files must be under the checkout or that owned directory. Explicitly list
+six `engram_<version>_<linux|darwin|windows>_<amd64|arm64>` archives (Windows
+`.zip`, others `.tar.gz`) plus `checksums.txt`; provide generated `engram.rb`
+separately. Checksums must bind exactly those six archive bytes.
+
+The caller builds once with GoReleaser OSS `release --skip=publish,announce,after
+--clean`, configuring generated-formula `skip_upload: true` for that build only.
+The original stable/prerelease `brews.skip_upload: auto` policy is retained:
+this publisher delivers the generated formula only for stable releases. It never
+rebuilds core, repacks the local npm candidate, changes formats/installers, or
+requires Pro. The following workflow unit still owns core build/config wiring.
+
+Before remote mutation, the publisher verifies clean HEAD/tree/tag, passed
+source/version-bound preflight receipts (including the explicit Go baseline FAIL
+exception), canonical contract bytes and exact candidate tarball SHA-256.
+Artifacts freeze exclusively once under `gentle-checks/publisher-<attemptId>`.
+New attempts need new IDs; frozen files/caches remain for operator inspection.
+A fresh npm version census and paginated GitHub release census include drafts;
+errors are unknown, never absence. Present npm requires a fresh remote-only
+`npm pack <package>@<version> --ignore-scripts --json --pack-destination <owned>`
+and exact tarball digest. Every core asset is downloaded through `gh api` as
+binary bytes. No HTTP client or shell interpolates commands.
+
+`engram-release-identity.json` is canonical JSON plus LF with schema
+`engram.release-identity/v1`, version, full source commit/tree, contract/npm/core
+digests, and base64 exact contract/core-manifest bytes. Formula bytes are a normal
+core-manifest asset; the carrier excludes itself. Matching version presence is
+not identity. Missing legacy carriers, unresolved target branches, incomplete
+published assets or unknown observations block without delivery actions; valid
+immutable mismatches require an operator-selected corrective version.
+
+For a new version, a GitHub **draft identity reservation** and carrier are created
+before npm staging. This is metadata, not published core artifacts. npm-only
+recovery uses that fresh draft carrier; a draft is always core-absent. Delivery
+then follows the existing planner: exact npm tarball under `staging-<version>`
+with provenance/public access, exact frozen core uploads without clobber and
+publication of the draft, then npm promotion to stable `latest` or prerelease
+`next`. Stable Homebrew delivery occurs before promotion: a successful accessible
+repository/directory census proves file absence; existing files are SHA-checked,
+identical bytes are a no-op, and updates use the current Git blob SHA. Unknown,
+404/auth failures and concurrent SHA failures stop; none imply absence.
+
+Environment gates: `GH_TOKEN` for the release repository;
+`ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN` for OIDC
+staging, together with GitHub provenance metadata (`GITHUB_ACTIONS`, repository,
+server URL, SHA/ref, run ID/attempt, workflow ref/name and runner environment)
+forwarded only to staging; `NPM_PROMOTION_TOKEN` for dist-tag writes; stable releases additionally
+need `HOMEBREW_TAP_TOKEN`. The tap token reaches only tap gh calls; promotion
+credentials reach only dist-tag commands. Owned npm configuration references
+`${NODE_AUTH_TOKEN}` without storing its value; staging receives no static npm
+credential. Token presence is not proof of authorization: trusted-publisher,
+OIDC/provenance, repository/tap access and npm metadata-write setup must be
+externally verified. No claim is made that dist-tag writes support OIDC alone.
+
+Results expose bounded reasons, completed steps and the latest `durablePoint`,
+never subprocess stdout/stderr or secrets. Errors stop immediately without
+retries, overwrite, deletion or automatic rollback. Resume uses a new attempt
+and fresh observations; a carrier-less interrupted reservation requires operator
+intervention. CLI success prints `release publication completed`; failure exits
+1 with only `release publication blocked or failed` on stderr (both plus LF).
+Per-version workflow concurrency, real source/build equivalence, managed pins,
+publication permission and live readiness remain separate gates, not proven by
+fake CLI tests. Focused offline check from `plugin/pi`:
+
+```sh
+node --test test/release-publisher.test.mjs
+```
