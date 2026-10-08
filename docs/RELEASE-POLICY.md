@@ -248,3 +248,44 @@ From `plugin/pi`, run the offline fake-runner checks:
 ```sh
 node --test test/release-destination-cli-queries.test.mjs
 ```
+
+### Coordinated candidate preflight (not publication)
+
+From a clean tagged checkout, with installed SDK/offline Go dependencies:
+
+```sh
+node plugin/pi/release/release-preflight.mjs --ref refs/tags/v0.2.0 --sdk-root /absolute/path/to/installed/pi-coding-agent --output /absolute/git-common/gentle-checks/new-preflight
+```
+
+Use the exact package version, not a corrective version chosen by this command.
+The output must be new, with an existing parent under Git's common directory
+`gentle-checks`; existing output and symlink escapes reject without replacement.
+Full tracked/untracked cleanliness and the selected tag/HEAD/tree are checked.
+Ref/package agreement rejects before subprocesses. The existing Pi validator
+then runs with `refs/tags/pi-v<version>`: its successful actual single-pin and CLI
+help checks prove installer/package equality. Only then is installerVersion
+recorded as derived evidence, not as a caller-supplied installer assertion.
+
+The executable runs `go test -json ./...`, `npm test` once (including package,
+public membership and semantic tests via the validated default script), the
+separate explicit SDK host test, real schema capture, then one candidate
+`npm pack --ignore-scripts --json --pack-destination <output>/npm`. Missing SDK
+or failed gates block; no dependencies are downloaded. The bounded process runner
+uses argument arrays, no shell, a 20-minute timeout and 64 MiB output limit.
+Only the named chunkcodec baseline failure with its diagnostic and no other
+failures is accepted as `accepted-baseline-failure`, never Go PASS.
+
+Capture consumption uses its single reported retained path, validates the source
+binding and compares canonical manifest/identity bytes. SHA-256 freezes the exact
+packed tarball and contract bytes after a final source check. Owned logs and
+`preflight-evidence.json` retain command/exit/status/log-digest receipts on gate
+failure; version, installer and prerequisite failures create no output. Ambient
+credentials are not forwarded or printed. This is not signed provenance or proof
+against transient source changes. Offline fake-runner tests are not evidence of
+a successful real full preflight.
+
+No core digest or trusted-publisher approval is synthesized. GoReleaser build,
+frozen gh/Homebrew publication and identity transport remain the next unit;
+serialized workflow/lock/recovery wiring remains the following unit. Destination
+freshness, OIDC/provenance, pin migration and publication authorization remain
+separate gates. This command does not activate the coordinated release workflow.
