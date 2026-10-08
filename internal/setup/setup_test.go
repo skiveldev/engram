@@ -852,7 +852,7 @@ func TestInstallPiPreservesExistingEngramMCPServer(t *testing.T) {
 	if err := os.MkdirAll(agentDir, 0755); err != nil {
 		t.Fatalf("mkdir agent dir: %v", err)
 	}
-	if err := os.WriteFile(settingsPath, []byte(`{"packages":["npm:existing","npm:gentle-engram@0.1.8","npm:gentle-engram@0.1.11","npm:gentle-engram@0.1.12","npm:gentle-engram@0.1.14","npm:gentle-engram@0.1.11","npm:pi-mcp-adapter"]}`), 0644); err != nil {
+	if err := os.WriteFile(settingsPath, []byte(`{"packages":["npm:existing","npm:pi-mcp-adapter","npm:gentle-engram@0.1.8"],"engramManagedPin":{"schema":1,"package":"npm:gentle-engram@0.1.8"}}`), 0644); err != nil {
 		t.Fatalf("write settings: %v", err)
 	}
 	originalMCP := `{"mcpServers":{"engram":{"command":"custom-engram","args":["mcp"],"lifecycle":"eager"},"other":{"command":"other"}}}`
@@ -960,7 +960,7 @@ func TestWarnPiMCPConfigRejectsMalformedConfig(t *testing.T) {
 func TestEnsurePiPackageSettingsMigratesLegacyPackageIdempotently(t *testing.T) {
 	resetSetupSeams(t)
 	settingsPath := filepath.Join(t.TempDir(), "settings.json")
-	if err := os.WriteFile(settingsPath, []byte(`{"packages":["npm:existing","npm:gentle-engram@0.1.8","npm:gentle-engram@0.1.11","npm:gentle-engram@0.1.12","npm:gentle-engram@0.1.14","npm:gentle-engram@0.1.15","npm:gentle-engram@0.1.16","npm:gentle-engram@0.1.8","npm:pi-mcp-adapter"]}`), 0644); err != nil {
+	if err := os.WriteFile(settingsPath, []byte(`{"packages":["npm:existing","npm:pi-mcp-adapter","npm:gentle-engram@0.1.8"],"engramManagedPin":{"schema":1,"package":"npm:gentle-engram@0.1.8"}}`), 0644); err != nil {
 		t.Fatalf("write settings: %v", err)
 	}
 
@@ -999,7 +999,7 @@ func TestEnsurePiPackageSettingsMigratesLegacyPackageIdempotently(t *testing.T) 
 func TestEnsurePiPackageSettingsDoesNotAddMCPAdapter(t *testing.T) {
 	resetSetupSeams(t)
 	settingsPath := filepath.Join(t.TempDir(), "settings.json")
-	if err := os.WriteFile(settingsPath, []byte(`{"packages":["npm:existing","npm:gentle-engram@0.2.0"]}`), 0644); err != nil {
+	if err := os.WriteFile(settingsPath, []byte(`{"packages":["npm:existing","npm:gentle-engram@0.2.0"],"engramManagedPin":{"schema":1,"package":"npm:gentle-engram@0.2.0"}}`), 0644); err != nil {
 		t.Fatalf("write settings: %v", err)
 	}
 	original, err := os.ReadFile(settingsPath)
@@ -1023,8 +1023,86 @@ func TestEnsurePiPackageSettingsDoesNotAddMCPAdapter(t *testing.T) {
 	}
 }
 
+func TestInstallPiReconcile(t *testing.T) {
+	if mode := os.Getenv("T5_FAKE_PI"); mode != "" {
+		path := filepath.Join(os.Getenv("PI_CODING_AGENT_DIR"), "settings.json")
+		data, _ := os.ReadFile(path)
+		var config map[string]interface{}
+		_ = json.Unmarshal(data, &config)
+		config["packages"] = []string{"npm:other", piGentleEngramPackage}
+		if mode == "conflict" { config["unrelated"] = "installer-change" }
+		if mode == "marker" { config["engramManagedPin"] = nil }
+		data, _ = json.Marshal(config)
+		_ = os.WriteFile(path, data, 0644)
+		fmt.Print("fake Pi installed\n")
+		if mode == "failure" { os.Exit(1) }
+		os.Exit(0)
+	}
+	for _, mode := range []string{"success", "conflict", "marker", "failure"} {
+		t.Run(mode, func(t *testing.T) {
+			resetSetupSeams(t)
+			dir := t.TempDir()
+			t.Setenv("PI_CODING_AGENT_DIR", dir)
+			path := filepath.Join(dir, "settings.json")
+			source := `{"packages":["npm:other","npm:gentle-engram@0.1.8"],"engramManagedPin":{"schema":1,"package":"npm:gentle-engram@0.1.8"},"npmCommand":["custom"]}`
+			if err := os.WriteFile(path, []byte(source), 0644); err != nil { t.Fatal(err) }
+			mcp := filepath.Join(dir, "mcp.json")
+			if err := os.WriteFile(mcp, []byte(`{"custom":true}`), 0644); err != nil { t.Fatal(err) }
+			lookPathFn = func(string) (string, error) { return "", errors.New("absent") }
+			calls := 0
+			var installed []byte
+			runCommand = func(name string, args ...string) ([]byte, error) {
+				calls++
+				if name != "pi" || !reflect.DeepEqual(args, []string{"install", piGentleEngramPackage}) { t.Fatalf("unexpected command %s %v", name, args) }
+				cmd := exec.Command(os.Args[0], "-test.run=^TestInstallPiReconcile$")
+				cmd.Env = append(os.Environ(), "T5_FAKE_PI="+mode)
+				output, err := cmd.Output()
+				if string(output) != "fake Pi installed\n" { t.Fatalf("installer output %q", output) }
+				installed, _ = os.ReadFile(path)
+				return output, err
+			}
+			_, err := Install("pi")
+			after, _ := os.ReadFile(path)
+			if calls != 1 { t.Fatalf("installer calls=%d", calls) }
+			if mode == "success" {
+				if err != nil { t.Fatal(err) }
+				var config map[string]interface{}
+				_ = json.Unmarshal(after, &config)
+				if config["engramManagedPin"].(map[string]interface{})["package"] != piGentleEngramPackage { t.Fatalf("marker not advanced: %s", after) }
+			} else if err == nil || !bytes.Equal(after, installed) {
+				t.Fatalf("expected error without overwriting installer state: %v %s", err, after)
+			}
+			if data, _ := os.ReadFile(mcp); string(data) != `{"custom":true}` { t.Fatalf("MCP changed: %s", data) }
+		})
+	}
+}
+
+func TestInstallPiOwnershipPreflight(t *testing.T) {
+	for _, source := range []string{
+		`{"packages":["npm:gentle-engram@0.1.8"],"npmCommand":["custom"]}`,
+		`{"packages":["npm:gentle-engram@0.2.0"]}`,
+		`{"packages":["npm:gentle-engram@custom"]}`,
+		`{"packages":["npm:gentle-engram@0.1.8"],"engramManagedPin":{"schema":1,"package":"npm:gentle-engram@0.1.11"}}`,
+		`{`,
+	} {
+		t.Run(source, func(t *testing.T) {
+			resetSetupSeams(t)
+			dir := t.TempDir()
+			t.Setenv("PI_CODING_AGENT_DIR", dir)
+			path := filepath.Join(dir, "settings.json")
+			if err := os.WriteFile(path, []byte(source), 0644); err != nil { t.Fatal(err) }
+			calls := 0
+			runCommand = func(string, ...string) ([]byte, error) { calls++; return nil, nil }
+			if _, err := Install("pi"); err == nil { t.Fatal("expected ownership rejection") }
+			after, err := os.ReadFile(path)
+			if err != nil || string(after) != source || calls != 0 { t.Fatalf("rejection changed state: %s, calls=%d, err=%v", after, calls, err) }
+		})
+	}
+}
+
 func TestInstallPiCommandFailure(t *testing.T) {
 	resetSetupSeams(t)
+	t.Setenv("PI_CODING_AGENT_DIR", t.TempDir())
 	runCommand = func(name string, args ...string) ([]byte, error) {
 		return []byte("boom"), errors.New("exit 1")
 	}

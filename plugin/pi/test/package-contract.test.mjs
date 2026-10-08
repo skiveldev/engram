@@ -302,7 +302,7 @@ test("pi-engram init does not add pi-mcp-adapter and keeps an existing entry", (
 		assert.ok(!readPackages(agentDir).includes(MCP_ADAPTER_PACKAGE));
 		assert.doesNotMatch(output, /pi-mcp-adapter/);
 
-		writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ packages: [MCP_ADAPTER_PACKAGE, PACKAGE_NAME] }));
+		writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ packages: [MCP_ADAPTER_PACKAGE, PACKAGE_NAME], engramManagedPin: { schema: 1, package: PACKAGE_NAME } }));
 		runCli(agentDir, "init");
 		assert.deepEqual(readPackages(agentDir), [MCP_ADAPTER_PACKAGE, PACKAGE_NAME]);
 	} finally {
@@ -336,16 +336,17 @@ test("published legacy Pi MCP template retains its opt-in launcher and ENGRAM_BI
 	assert.equal(selectBin("  /custom/engram  "), "  /custom/engram  ", "a nonblank ENGRAM_BIN is preserved exactly");
 });
 
-test("pi-engram init replaces legacy package entries without disturbing other packages", () => {
+test("pi-engram init migrates an explicitly adopted pin without disturbing other packages", () => {
 	const agentDir = mkdtempSync(join(tmpdir(), "engram-pi-cli-"));
 	try {
 		writeFileSync(
 			join(agentDir, "settings.json"),
-			JSON.stringify({ packages: ["npm:existing", ...LEGACY_PACKAGE_NAMES, PACKAGE_NAME, LEGACY_PACKAGE_NAMES[1], MCP_ADAPTER_PACKAGE] }),
+			JSON.stringify({ packages: ["npm:existing", LEGACY_PACKAGE_NAMES[0], MCP_ADAPTER_PACKAGE] }),
 		);
 		const originalMcp = JSON.stringify({ mcpServers: { engram: { command: "custom-engram" }, existing: { command: "existing" } }, unrelated: true });
 		writeFileSync(join(agentDir, "mcp.json"), originalMcp);
 
+		runCli(agentDir, "adopt", LEGACY_PACKAGE_NAMES[0]);
 		const output = runCli(agentDir, "init");
 		assert.deepEqual(readPackages(agentDir), ["npm:existing", PACKAGE_NAME, MCP_ADAPTER_PACKAGE]);
 		assert.match(output, new RegExp(`Added ${PACKAGE_NAME} in settings\\.json`));
@@ -366,6 +367,79 @@ test("pi-engram init replaces legacy package entries without disturbing other pa
 		assert.match(repeatOutput, new RegExp(`Kept ${PACKAGE_NAME} in settings\\.json`));
 	} finally {
 		rmSync(agentDir, { recursive: true, force: true });
+	}
+});
+
+test("Pi ownership rejects ambiguity and marker conflicts without changing configuration", () => {
+	const blocked = "Pi Engram pin ownership blocked; use pi-engram adopt <exact-package> for a single version pin without a marker\n";
+	const dir = mkdtempSync(join(tmpdir(), "engram-ownership-"));
+	const call = (...args) => spawnSync(process.execPath, [CLI_PATH, ...args], { encoding: "utf8", env: { ...process.env, PI_CODING_AGENT_DIR: dir } });
+	const path = join(dir, "settings.json");
+	const mcp = '{"mcpServers":{"engram":{"command":"custom"}}}';
+	writeFileSync(join(dir, "mcp.json"), mcp);
+	for (const pin of [...LEGACY_PACKAGE_NAMES, PACKAGE_NAME, "npm:gentle-engram@custom", "git:gentle-engram", { source: PACKAGE_NAME }]) {
+		const source = JSON.stringify({ packages: [pin], npmCommand: ["custom"], unrelated: { keep: true } });
+		writeFileSync(path, source);
+		const result = call("init", "--force");
+		assert.equal(result.status, 1); assert.equal(result.stdout, ""); assert.equal(result.stderr, blocked);
+		assert.equal(readFileSync(path, "utf8"), source);
+		assert.equal(readFileSync(join(dir, "mcp.json"), "utf8"), mcp);
+	}
+	for (const marker of [null, {}, { schema: 2, package: PACKAGE_NAME }, { schema: 1, package: "npm:gentle-engram@0.0.1" }]) {
+		const source = JSON.stringify({ packages: [PACKAGE_NAME], engramManagedPin: marker });
+		writeFileSync(path, source);
+		for (const args of [["init"], ["adopt", PACKAGE_NAME]]) {
+			const result = call(...args);
+			assert.equal(result.status, 1); assert.equal(result.stdout, ""); assert.equal(result.stderr, blocked);
+			assert.equal(readFileSync(path, "utf8"), source);
+		}
+	}
+	for (const pin of LEGACY_PACKAGE_NAMES) {
+		writeFileSync(path, JSON.stringify({ packages: ["npm:other", pin], npmCommand: ["custom"] }));
+		const result = call("adopt", pin);
+		assert.equal(result.status, 0); assert.equal(result.stderr, "");
+		assert.equal(result.stdout, `Authorized management of ${pin}; package unchanged\n`);
+		assert.deepEqual(readPackages(dir), ["npm:other", pin]);
+		call("init");
+		const settings = JSON.parse(readFileSync(path, "utf8"));
+		assert.deepEqual(settings.packages, ["npm:other", PACKAGE_NAME]);
+		assert.deepEqual(settings.engramManagedPin, { schema: 1, package: PACKAGE_NAME });
+		assert.deepEqual(settings.npmCommand, ["custom"]);
+		const before = readFileSync(path, "utf8");
+		assert.equal(call("init").status, 0);
+		assert.equal(readFileSync(path, "utf8"), before);
+	}
+});
+
+test("Pi explicit adoption rejects invalid selections", async (t) => {
+	const blocked = "Pi Engram pin ownership blocked; use pi-engram adopt <exact-package> for a single version pin without a marker\n";
+	for (const [name, packages, args] of [
+		["duplicate pins", [PACKAGE_NAME, PACKAGE_NAME], ["adopt", PACKAGE_NAME]],
+		["custom specification", ["npm:gentle-engram@custom"], ["adopt", "npm:gentle-engram@custom"]],
+		["filtered source", [{ source: PACKAGE_NAME }], ["adopt", PACKAGE_NAME]],
+		["mismatched selection", [PACKAGE_NAME], ["adopt", LEGACY_PACKAGE_NAMES[0]]],
+		["missing selection", [PACKAGE_NAME], ["adopt"]],
+		["empty selection", [PACKAGE_NAME], ["adopt", ""]],
+		["extra argument", [PACKAGE_NAME], ["adopt", PACKAGE_NAME, "extra"]],
+	]) {
+		await t.test(name, () => {
+			const dir = mkdtempSync(join(tmpdir(), "engram-adoption-"));
+			const path = join(dir, "settings.json");
+			const mcpPath = join(dir, "mcp.json");
+			const mcp = '{"mcpServers":{"engram":{"command":"custom"}}}';
+			const source = JSON.stringify({ packages, npmCommand: ["custom"] });
+			writeFileSync(path, source);
+			writeFileSync(mcpPath, mcp);
+			const result = spawnSync(process.execPath, [CLI_PATH, ...args], {
+				encoding: "utf8",
+				env: { ...process.env, PI_CODING_AGENT_DIR: dir },
+			});
+			assert.equal(result.status, 1);
+			assert.equal(result.stdout, "");
+			assert.equal(result.stderr, blocked);
+			assert.equal(readFileSync(path, "utf8"), source);
+			assert.equal(readFileSync(mcpPath, "utf8"), mcp);
+		});
 	}
 });
 

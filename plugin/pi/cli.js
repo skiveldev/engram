@@ -5,19 +5,16 @@ import { dirname, join } from "node:path";
 
 const packageMetadata = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf-8"));
 const PACKAGE_NAME = `npm:${packageMetadata.name}@${packageMetadata.version}`;
-const LEGACY_PACKAGE_NAMES = new Set([
-  "npm:gentle-engram@0.1.8",
-  "npm:gentle-engram@0.1.11",
-  "npm:gentle-engram@0.1.12",
-  "npm:gentle-engram@0.1.14",
-  "npm:gentle-engram@0.1.15",
-  "npm:gentle-engram@0.1.16",
-]);
+const PIN = /^npm:gentle-engram@(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(?![\s\S])/;
+const BLOCKED = "Pi Engram pin ownership blocked; use pi-engram adopt <exact-package> for a single version pin without a marker";
 const HELP = `pi-engram
 
 Usage:
   pi-engram init [--force]
+  pi-engram adopt <exact-package>
 
+Adopt explicitly authorizes management of one existing exact version pin.
+It records consent without migrating or installing; conflicts/custom specs block.
 Ensures gentle-engram is declared in settings.json.
 Does not create or modify Pi MCP config and does not add an MCP adapter
 extension (Pi's built-in MCP reads mcp.json). Install the extension with:
@@ -42,37 +39,31 @@ function writeJsonObject(filePath, data) {
   writeFileSync(filePath, `${JSON.stringify(data, null, 2)}\n`, "utf-8");
 }
 
-function ensureEngramPackage(settingsPath) {
+function ensureEngramPackage(settingsPath, adoption) {
   const settings = readJsonObject(settingsPath);
-  const packages = Array.isArray(settings.packages) ? settings.packages : [];
-  const updatedPackages = [];
-  let hasPackage = false;
-  let changed = false;
-
-  for (const packageName of packages) {
-    if (LEGACY_PACKAGE_NAMES.has(packageName)) {
-      changed = true;
-      continue;
-    }
-    if (packageName === PACKAGE_NAME) {
-      if (hasPackage) {
-        changed = true;
-        continue;
-      }
-      hasPackage = true;
-    }
-    updatedPackages.push(packageName);
-  }
-
-  if (!hasPackage) {
-    updatedPackages.push(PACKAGE_NAME);
-    changed = true;
-  }
-  if (changed) {
-    settings.packages = updatedPackages;
+  if (Object.hasOwn(settings, "packages") && !Array.isArray(settings.packages)) throw new Error(BLOCKED);
+  const packages = settings.packages || [];
+  const refs = packages.filter((value) => JSON.stringify(value).includes("gentle-engram"));
+  const marked = Object.hasOwn(settings, "engramManagedPin");
+  const marker = settings.engramManagedPin;
+  const valid = refs.length === 1 && typeof refs[0] === "string" && PIN.test(refs[0]);
+  if (adoption !== undefined) {
+    if (marked || !valid || adoption !== refs[0]) throw new Error(BLOCKED);
+    settings.engramManagedPin = { schema: 1, package: adoption };
     writeJsonObject(settingsPath, settings);
+    console.log(`Authorized management of ${adoption}; package unchanged`);
+    return false;
   }
-  return changed;
+  if (marked ? (!valid || !marker || Array.isArray(marker) || Object.keys(marker).length !== 2 || marker.schema !== 1 || marker.package !== refs[0]) : refs.length !== 0) {
+    throw new Error(BLOCKED);
+  }
+  if (marked && refs[0] === PACKAGE_NAME) return false;
+  if (marked) packages[packages.indexOf(refs[0])] = PACKAGE_NAME;
+  else packages.push(PACKAGE_NAME);
+  settings.packages = packages;
+  settings.engramManagedPin = { schema: 1, package: PACKAGE_NAME };
+  writeJsonObject(settingsPath, settings);
+  return true;
 }
 
 function warnExistingEngramMcp(mcpPath) {
@@ -97,8 +88,16 @@ function init() {
 }
 
 const command = process.argv[2];
-if (command === "init") {
-  init();
-} else {
-  console.log(HELP);
+try {
+  if (command === "init" && (process.argv.length === 3 || (process.argv.length === 4 && process.argv[3] === "--force"))) {
+    init();
+  } else if (command === "adopt") {
+    if (process.argv.length !== 4 || !PIN.test(process.argv[3])) throw new Error(BLOCKED);
+    ensureEngramPackage(join(getAgentDir(), "settings.json"), process.argv[3]);
+  } else {
+    console.log(HELP);
+  }
+} catch (error) {
+  console.error(error.message);
+  process.exitCode = 1;
 }

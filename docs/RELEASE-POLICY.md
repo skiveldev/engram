@@ -26,6 +26,35 @@ Before upgrading:
 
 Rollback means restoring the known-good release and configuration, plus any required backup, using the documented procedure for the affected component. It does not promise an automated rollback path or behavior beyond that component's documentation. Feature or data migrations can constrain rollback; consult the release-specific notes before upgrading.
 
+## Pi managed-pin consent and recovery
+
+Existing Engram references—including historical/current pins, custom sources,
+filtered objects and duplicates—are not evidence of ownership. Setup and
+`pi-engram init` block unmarked references without installing or editing settings.
+`--force` does not grant consent. Custom specifications are never replaced.
+
+Back up `settings.json`, `mcp.json` and the known-good installation first. For
+one existing canonical SemVer pin, explicitly run
+`pi-engram adopt npm:gentle-engram@<exact-existing-version>`.
+Adoption only records consent; it does not install or migrate the package.
+Then run Engram's Pi setup or `pi-engram init` to migrate to the bundled pin.
+Fresh configurations record consent automatically. The settings marker is exactly
+`"engramManagedPin": {"schema": 1, "package": "npm:gentle-engram@<version>"}`:
+two keys, schema number 1, and an exact match to the sole string reference.
+It is local authorization metadata, not cryptographic ownership proof. Invalid,
+stale or conflicting markers block, including adoption; inspect them manually.
+
+Setup validates before `pi install`. After success it accepts only unchanged
+settings or Pi's expected single package change, retaining the old marker and
+all unrelated values, before writing the new marker and any npmCommand addition.
+Unexpected changes produce a conflict without overwrite or automatic restore.
+Installer failure causes no Engram settings write: failure during package
+installation skips Pi's package persistence, but persistence errors and package
+artifacts are not atomic rollback. Inspect settings/marker and command diagnostics
+before retrying. Read back the package and marker as the local audit record.
+To roll back, restore the backed-up settings/MCP configuration and known-good
+installation deliberately; no automatic downgrade or global ledger is provided.
+
 ## Check release lag
 
 The [stable release gap audit](../.github/workflows/release-gap-audit.yml) runs weekly and can be dispatched manually. It compares npm's `gentle-engram/latest` to the matching `pi-v*` tag and the latest stable GitHub Release to its `v*` tag. Changes on `main` to Pi plugin or Go runtime/build inputs after those tags produce a failing run and an actionable step summary. Documentation-only changes do not trigger a gap. Path changes are only a signal to review release need; they do not identify fixes or guarantee an artifact is broken. Unavailable metadata or missing tags fail the run rather than implying the channel is current. Maintainers should inspect the summary and changes, decide whether publication is appropriate, and use the existing tag-driven release workflows; the audit never publishes or edits issues.

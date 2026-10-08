@@ -21,6 +21,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"regexp"
 	"runtime"
 	"slices"
 	"sort"
@@ -312,28 +314,53 @@ func piAgentDir() string {
 }
 
 func installPi() (*Result, error) {
+	agentDir := piAgentDir()
+	settingsPath := filepath.Join(agentDir, "settings.json")
+	original, err := readJSONConfig(settingsPath)
+	if err != nil {
+		return nil, fmt.Errorf("read Pi settings: %w", err)
+	}
+	planned := make(map[string]json.RawMessage, len(original))
+	for key, value := range original {
+		planned[key] = value
+	}
+	planned, changed, err := planPiConfig(planned, settingsPath)
+	if err != nil {
+		return nil, err
+	}
 	if _, err := runCommand("pi", "install", piGentleEngramPackage); err != nil {
 		return nil, fmt.Errorf("install %s: %w", piGentleEngramPackage, err)
 	}
-
-	agentDir := piAgentDir()
-	settingsPath := filepath.Join(agentDir, "settings.json")
+	observed, err := readJSONConfig(settingsPath)
+	if err != nil {
+		return nil, err
+	}
+	expected := make(map[string]json.RawMessage, len(original)+1)
+	for key, value := range original {
+		expected[key] = value
+	}
+	expected["packages"] = planned["packages"]
+	if !samePiConfig(observed, original) && !samePiConfig(observed, expected) {
+		return nil, fmt.Errorf("Pi settings changed unexpectedly after install; no Engram settings written")
+	}
+	if _, exists := planned["npmCommand"]; !exists {
+		if _, err := lookPathFn("mise"); err == nil {
+			node := resolveMiseNodeVersionFn()
+			if node == "" {
+				node = "node"
+			}
+			planned["npmCommand"], err = jsonMarshalFn([]string{"mise", "exec", node, "--", "npm"})
+			if err != nil {
+				return nil, err
+			}
+			changed = true
+		}
+	}
 	files := 0
-
-	// ensurePiNpmCommand must run before ensurePiPackageSettings so that a single
-	// write covers both npm command pinning and package list updates when both are
-	// needed on a fresh install. If npmCommand was already set we still proceed and
-	// let ensurePiPackageSettings handle the packages field independently.
-	npmChanged, err := ensurePiNpmCommand(settingsPath)
-	if err != nil {
-		return nil, err
-	}
-
-	settingsChanged, err := ensurePiPackageSettings(settingsPath)
-	if err != nil {
-		return nil, err
-	}
-	if npmChanged || settingsChanged {
+	if changed {
+		if err := writeJSONConfig(settingsPath, planned); err != nil {
+			return nil, err
+		}
 		files++
 	}
 
@@ -344,50 +371,92 @@ func installPi() (*Result, error) {
 	return &Result{Agent: "pi", Destination: agentDir, Files: files}, nil
 }
 
-func ensurePiPackageSettings(settingsPath string) (bool, error) {
+// planPiPackages validates local consent before invoking any installer or writer.
+// The marker is authorization metadata, not cryptographic proof of ownership.
+func planPiPackages(settingsPath string) (map[string]json.RawMessage, bool, error) {
 	config, err := readJSONConfig(settingsPath)
 	if err != nil {
-		return false, fmt.Errorf("read Pi settings: %w", err)
+		return nil, false, fmt.Errorf("read Pi settings: %w", err)
 	}
+	return planPiConfig(config, settingsPath)
+}
+
+func samePiConfig(a, b map[string]json.RawMessage) bool {
+	decode := func(config map[string]json.RawMessage) interface{} {
+		raw, _ := json.Marshal(config)
+		var value interface{}
+		decoder := json.NewDecoder(strings.NewReader(string(raw)))
+		decoder.UseNumber()
+		_ = decoder.Decode(&value)
+		return value
+	}
+	return reflect.DeepEqual(decode(a), decode(b))
+}
+
+func planPiConfig(config map[string]json.RawMessage, settingsPath string) (map[string]json.RawMessage, bool, error) {
 	packages, err := readRawArrayField(config, "packages", settingsPath)
 	if err != nil {
-		return false, err
+		return nil, false, err
 	}
-	changed := false
-	updatedPackages := make([]json.RawMessage, 0, len(packages)+1)
-	hasGentleEngramPackage := false
-	for _, raw := range packages {
-		var pkg string
-		if err := json.Unmarshal(raw, &pkg); err == nil {
-			switch pkg {
-			case piLegacyGentleEngramPackage, piPreviousGentleEngramPackage, piPriorGentleEngramPackage, piPredecessorGentleEngramPackage, piFormerGentleEngramPackage, piEarlierGentleEngramPackage:
-				changed = true
-				continue
-			case piGentleEngramPackage:
-				if hasGentleEngramPackage {
-					changed = true
-					continue
-				}
-				hasGentleEngramPackage = true
+	const rejection = "Pi Engram pin ownership blocked; use pi-engram adopt <exact-package> for a single version pin without a marker"
+	refs, index, pin := 0, -1, ""
+	for i, raw := range packages {
+		// Include object sources and personalized references; never append a competitor.
+		var value interface{}
+		_ = json.Unmarshal(raw, &value)
+		decoded, _ := json.Marshal(value)
+		if strings.Contains(string(decoded), "gentle-engram") {
+			refs++
+			index = i
+			if json.Unmarshal(raw, &pin) != nil {
+				pin = ""
 			}
 		}
-		updatedPackages = append(updatedPackages, raw)
 	}
-	packages = updatedPackages
-	if !hasGentleEngramPackage {
-		raw, err := jsonMarshalFn(piGentleEngramPackage)
-		if err != nil {
-			return false, fmt.Errorf("marshal Pi package %q: %w", piGentleEngramPackage, err)
+	markerRaw, marked := config["engramManagedPin"]
+	if marked {
+		var marker map[string]json.RawMessage
+		var schema float64
+		var owned string
+		if json.Unmarshal(markerRaw, &marker) != nil || len(marker) != 2 ||
+			json.Unmarshal(marker["schema"], &schema) != nil || schema != 1 ||
+			json.Unmarshal(marker["package"], &owned) != nil || owned != pin ||
+			refs != 1 || !validPiManagedPin(pin) {
+			return nil, false, fmt.Errorf("%s", rejection)
 		}
-		packages = append(packages, raw)
-		changed = true
+	} else if refs != 0 {
+		return nil, false, fmt.Errorf("%s", rejection)
 	}
-	if !changed {
-		return false, nil
+	if marked && pin == piGentleEngramPackage {
+		return config, false, nil
+	}
+	raw, err := jsonMarshalFn(piGentleEngramPackage)
+	if err != nil {
+		return nil, false, fmt.Errorf("marshal Pi package %q: %w", piGentleEngramPackage, err)
+	}
+	if index < 0 {
+		packages = append(packages, raw)
+	} else {
+		packages[index] = raw
 	}
 	config["packages"], err = jsonMarshalFn(packages)
 	if err != nil {
-		return false, fmt.Errorf("marshal Pi packages: %w", err)
+		return nil, false, fmt.Errorf("marshal Pi packages: %w", err)
+	}
+	config["engramManagedPin"], err = jsonMarshalFn(map[string]interface{}{"schema": 1, "package": piGentleEngramPackage})
+	return config, true, err
+}
+
+func validPiManagedPin(pin string) bool {
+	return piManagedPinPattern.MatchString(pin)
+}
+
+var piManagedPinPattern = regexp.MustCompile(`^npm:gentle-engram@(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$`)
+
+func ensurePiPackageSettings(settingsPath string) (bool, error) {
+	config, changed, err := planPiPackages(settingsPath)
+	if err != nil || !changed {
+		return false, err
 	}
 	return true, writeJSONConfig(settingsPath, config)
 }
