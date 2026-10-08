@@ -330,6 +330,27 @@ separated from Pi-owned attribution, leases, continuation, and recovery. Resolvi
 public shape differences requires a separately scoped production change or an
 explicit contract disposition; the named variants above have explicit dispositions.
 
+### Session-summary public-effect evidence
+
+From `plugin/pi`, with offline Go dependencies and isolated `TMPDIR`, `GOTMPDIR`,
+and `GOCACHE` under Git's common directory:
+
+```sh
+node --test test/release-session-summary-contract.test.mjs
+```
+
+The real HTTP/MCP and registered Pi fixture checks complete distinct summary rows,
+response envelopes, defaults and global counters. MCP titles are
+`Session summary: parity`; HTTP/Pi use `Session summary`. Repeated input retains
+observation identity and response, increments only that row's `duplicate_count`,
+and updates validated `updated_at`/`last_seen_at` timestamps without new rows.
+Empty and whitespace-only content retain distinct HTTP/Pi versus MCP diagnostics.
+The first rejected Pi write still registers its project-owned satellite session;
+that complete row and session-count effect are asserted separately. Subsequent
+rejections preserve every public stored export field and all statistics.
+Export-generation timestamps are validated separately, not hidden stored fields.
+This sandbox does not prove SDK input validation or MCP/Pi host lifecycle parity.
+
 ### Current-project public-response evidence
 
 The same guarded `release-agent-contract.test.mjs` command above also checks
@@ -567,6 +588,21 @@ no-write effects, zero-extraction results and empty-content variants. Pi's first
 host registration is accounted for separately. Project-list ordering is not
 asserted; complete values and all counters are retained. These fixtures do not
 prove partial-store-failure recovery or SDK dispatch validation.
+
+## Public lifecycle contract checks
+
+From `plugin/pi`, using the offline, isolated temporary and Go-cache settings documented above:
+
+```sh
+node --test test/release-session-lifecycle-contract.test.mjs
+```
+
+The lifecycle fixture compares complete public exports and global counters for
+session creation, repeat registration, completion and absent-ID completion.
+MCP resolves its project independently of the supplied `project` field; Pi end
+accepts only its current host session. These are explicit variants, not proof
+of equivalent host recovery or continuation. Session-end ordering is checked
+in UTC at SQLite's second precision, while full stored fields remain compared.
 
 ## Core resume compatibility
 
