@@ -185,3 +185,37 @@ node --test test/release-publication-attempt.test.mjs
 - [Security policy](../SECURITY.md) for vulnerability reporting and supported-version security fixes.
 - [Installation guide](./INSTALLATION.md) for installation methods.
 - [Engram Cloud quickstart](./engram-cloud/quickstart.md) for Cloud deployment guidance.
+
+### Injected destination query coordinator (offline-tested seam)
+
+`release/destination-probes.mjs` exports asynchronous
+`probeAndPlanPublicationAttempt({ attemptId, version, artifacts, gates, queries })`.
+`queries.npm` and `queries.core` are caller-provided IO functions. Each receives
+one frozen `{ attemptId, version, destination }` request per valid invocation,
+including repeated attempts for the same version; no observation cache is used.
+Candidate/artifact/attempt validation and all six gates run through the existing
+planner before external queries. Both queries settle even if one throws.
+
+Adapters must actually query the remote destination anew and return explicit
+`absent`, `present` or `unknown` state. Present requires externally verified
+`sourceCommit`, `contractDigest` and `contentDigest`; missing or unverifiable
+identity is not absence. Never infer identity from a version or tag. The coordinator
+copies returned observations and binds current attempt/version; optional echoed
+`attemptId`, `version` or `destination` must match exactly or the result rejects.
+Unknown, malformed, thrown or stale results block with no actions and bounded
+`invalid-destination-observation:<destination>` reasons, never remote error text.
+Valid identity mismatches retain the existing corrective-version requirement.
+Inputs and returned adapter records are not mutated; no publication is executed.
+
+This proves fresh callback invocation only, not authentic network queries,
+source-build provenance or production readiness. Concrete npm/GitHub extraction
+and live-query checks remain unimplemented; whole T3 closure is not established.
+No new publication identity-carrier format is introduced (that format remains
+separately deferred). Existing destinations without verifiable identity block.
+The unresolved closure disposition remains parent-owned, not reassigned to T4.
+
+From `plugin/pi`, run the socket-free, in-memory adapter checks:
+
+```sh
+node --test test/release-destination-probes.test.mjs
+```
