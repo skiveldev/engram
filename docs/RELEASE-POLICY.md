@@ -138,7 +138,7 @@ Malformed, unknown, missing or previous-attempt evidence rejects with
 `TypeError: invalid destination observation`. Valid immutable identity differences
 are preserved for the planner to block; the operator chooses any corrective
 version, never this helper. Returned fields are compatible with the existing
-planner's absent/present snapshots; the planner itself is not integrated here.
+planner's absent/present snapshots; the offline composition below integrates them.
 
 Adapters must query destinations anew for each publication/recovery attempt.
 A matching attempt ID does **not** prove a new query happened. Offline fixtures
@@ -148,6 +148,36 @@ outside this unit. From `plugin/pi`, run the pure checks with:
 
 ```sh
 node --test test/release-artifact-evidence.test.mjs
+```
+
+### Offline publication/recovery composition
+
+`planPublicationAttempt({ version, attemptId, artifacts, destinations, gates })`
+in `release/publication-attempt.mjs` builds the artifact identity, binds both
+injected observations to the same attempt/version, then calls `planPublication`.
+`artifacts` is the `buildArtifactIdentity` input above; `destinations` contains
+`npm` and `core` observations. It returns `{ candidate, plan }`, retaining the
+exact artifact identity including source tree and core manifest bytes.
+Invalid artifacts return a null candidate and `invalid-artifact-evidence`;
+invalid/missing/unknown/stale observations block with
+`invalid-destination-observation:npm` or `:core`. All blocked plans have no actions.
+
+The planner enforces strict SemVer and six explicit true gates: `goTests`,
+`piTests`, `packageChecks`, `profileParity`, `semanticContract`, `trustedPublisher`.
+Ready actions stage npm under `staging-<version>`, publish core if absent, then
+promote npm to `next` for prereleases or `latest` for stable versions. Matching
+immutable destinations are reused without republishing. Any source commit,
+contract digest or destination content digest mismatch blocks with
+`immutable-mismatch:<destination>` and `correctiveVersionRequired: true`.
+Only the operator chooses a corrective version; nothing overwrites or increments it.
+
+This action list is a pure plan, never executed. Inputs remain unchanged on
+success and rejection. Injected observations are not live queries, and matching
+attempt IDs do not establish freshness, build-source correspondence, provenance,
+readiness or permission. Network adapters and live recovery evidence remain pending.
+
+```sh
+node --test test/release-publication-attempt.test.mjs
 ```
 
 ## Related policies
